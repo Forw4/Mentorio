@@ -87,8 +87,10 @@ private struct BraindumpView: View {
                 }
 
                 TextEditor(text: $text)
+                    .scrollContentBackground(.hidden)
                     .padding(12)
-                    .background(Color(white: 0.96))
+                    .background(MentorioColor.surface)
+                    .foregroundStyle(MentorioColor.textPrimary)
                     .cornerRadius(14)
                     .frame(minHeight: 240)
             }
@@ -97,11 +99,11 @@ private struct BraindumpView: View {
             Spacer()
 
             Button(action: onContinue) {
-                Text("Look Closer")
+                Text("Посмотреть глубже")
                     .font(.headline)
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity, minHeight: 56)
-                    .background(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.gray : Color.blue)
+                    .background(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? MentorioColor.stroke : MentorioColor.accent)
                     .cornerRadius(16)
                     .padding(.horizontal, 16)
             }
@@ -136,7 +138,7 @@ private struct FocusView: View {
                         // DEBUG: Show raw response if all fields are nil
                         if response.topics == nil && response.highlight == nil && response.insight == nil {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("RAW API RESPONSE:")
+                                Text("СЫРОЙ ОТВЕТ API:")
                                     .font(.caption.weight(.bold))
                                     .foregroundColor(.secondary)
                                 if let rawDebug = rawResponseDebug {
@@ -144,7 +146,7 @@ private struct FocusView: View {
                                         .font(.caption.monospaced())
                                         .foregroundColor(.secondary)
                                         .padding(8)
-                                        .background(Color(white: 0.95))
+                                        .background(MentorioColor.surface)
                                         .cornerRadius(8)
                                 }
                             }
@@ -165,7 +167,7 @@ private struct FocusView: View {
                                         Text(topic)
                                             .frame(maxWidth: .infinity)
                                             .padding()
-                                            .background(Color.blue.opacity(0.9))
+                                            .background(MentorioColor.accent)
                                             .foregroundColor(.white)
                                             .cornerRadius(14)
                                     }
@@ -174,7 +176,7 @@ private struct FocusView: View {
                         }
                         // If highlight and insight exist, show standard view
                         else if let highlight = response.highlight, let insight = response.insight {
-                            Text("Highlight")
+                            Text("Суть")
                                 .font(.caption.weight(.semibold))
                                 .foregroundColor(.secondary)
 
@@ -195,7 +197,7 @@ private struct FocusView: View {
 
                                     TextField("Твой ответ...", text: $userAnswer)
                                         .padding(12)
-                                        .background(Color(white: 0.96))
+                                        .background(MentorioColor.surface)
                                         .cornerRadius(12)
                                 }
                                 .padding(.top, 12)
@@ -210,7 +212,7 @@ private struct FocusView: View {
                                             Text(choice)
                                                 .frame(maxWidth: .infinity)
                                                 .padding()
-                                                .background(Color.blue.opacity(0.9))
+                                                .background(MentorioColor.accent)
                                                 .foregroundColor(.white)
                                                 .cornerRadius(14)
                                         }
@@ -331,7 +333,7 @@ private struct ActionView: View {
             } else if let actionText {
                 ScrollView {
                     VStack(spacing: 20) {
-                        Text("The One Action")
+                        Text("Один шаг")
                             .font(.caption.weight(.semibold))
                             .foregroundColor(.secondary)
 
@@ -356,7 +358,7 @@ private struct ActionView: View {
             }
 
             if let actionText {
-                Button("Clear Head") {
+                Button("Очистить голову") {
                     saveSession(action: actionText)
                     onBack()
                 }

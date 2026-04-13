@@ -15,6 +15,7 @@ struct SettingsView: View {
             Form {
                 Section("Профиль") {
                     TextField("Как к тебе обращаться?", text: $userName)
+                        .font(MentorioType.body)
                         .focused($nameFieldFocused)
                         .textFieldStyle(.plain)
                 }
@@ -25,15 +26,32 @@ struct SettingsView: View {
                     } label: {
                         Label("Недавно удаленные", systemImage: "trash")
                     }
+
+                    NavigationLink {
+                        PrivacyView()
+                    } label: {
+                        Label("Приватность", systemImage: "lock.shield")
+                    }
+                }
+
+                Section("Отладка") {
+                    NavigationLink {
+                        DiagnosticsView()
+                    } label: {
+                        Label("Диагностика", systemImage: "waveform.path.ecg")
+                    }
                 }
             }
         }
-        .navigationTitle("Settings")
+        .navigationTitle("Настройки")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(MentorioColor.paper, for: .navigationBar)
+        .tint(MentorioColor.accent)
+        .toolbarBackground(MentorioColor.background, for: .navigationBar)
+        .scrollContentBackground(.hidden)
+        .background(MentorioColor.background)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Done") {
+                Button("Готово") {
                     dismiss()
                 }
                 .foregroundStyle(MentorioColor.charcoal.opacity(0.7))
@@ -47,4 +65,5 @@ struct SettingsView: View {
 
 #Preview {
     SettingsView()
+    .environmentObject(makePreviewViewModel())
 }

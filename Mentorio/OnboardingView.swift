@@ -19,7 +19,7 @@ struct OnboardingView: View {
                     Text("Mentorio")
                         .font(.largeTitle.weight(.bold))
                         .fontDesign(.serif)
-                        .foregroundStyle(MentorioColor.charcoal)
+                        .foregroundStyle(MentorioColor.claudeOrange)
                     
                     Text("Умный журнал и когнитивное зеркало")
                         .font(.title3)
@@ -34,16 +34,16 @@ struct OnboardingView: View {
                     TextField("Как к тебе обращаться?", text: $nameInput)
                         .font(.title3)
                         .fontDesign(.serif)
-                        .foregroundStyle(MentorioColor.charcoal)
+                        .foregroundStyle(.primary)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 16)
                         .background(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color(white: 0.97))
+                                .fill(MentorioColor.surface)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(MentorioColor.charcoal.opacity(0.1), lineWidth: 1)
+                                .stroke(MentorioColor.stroke, lineWidth: 1)
                         )
                         .focused($nameFieldFocused)
                     
@@ -56,16 +56,16 @@ struct OnboardingView: View {
                         Text("Начать")
                             .font(.title3.weight(.medium))
                             .fontDesign(.serif)
-                            .foregroundStyle(nameInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? MentorioColor.charcoal.opacity(0.4) : MentorioColor.charcoal.opacity(0.9))
+                            .foregroundStyle(nameInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.primary : MentorioColor.textOnAccent)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(nameInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color(white: 0.94) : MentorioColor.charcoal.opacity(0.08))
+                                    .fill(nameInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? MentorioColor.surface : MentorioColor.claudeOrange)
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(MentorioColor.charcoal.opacity(0.12), lineWidth: 1)
+                                    .stroke(MentorioColor.stroke, lineWidth: 1)
                             )
                     }
                     .buttonStyle(.plain)

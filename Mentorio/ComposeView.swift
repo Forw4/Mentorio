@@ -23,7 +23,7 @@ struct ComposeView: View {
                     .padding(.top, 8)
 
                 if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("Start writing.")
+                    Text("Начни писать.")
                         .font(.body)
                         .fontDesign(.serif)
                         .foregroundStyle(MentorioColor.charcoal.opacity(0.28))
@@ -33,17 +33,17 @@ struct ComposeView: View {
                 }
             }
             .mentorioPaperBackground()
-            .navigationTitle("New entry")
+            .navigationTitle("Новая запись")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button("Отмена") {
                         onCancel()
                     }
                     .foregroundStyle(MentorioColor.charcoal.opacity(0.65))
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
+                    Button("Сохранить") {
                         onSave()
                     }
                     .fontWeight(.semibold)
