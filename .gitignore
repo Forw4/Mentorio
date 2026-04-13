@@ -1,0 +1,9 @@
+# Секреты
+API Config.xcconfig
+Secrets.xcconfig
+
+# Системные файлы Xcode
+.DS_Store
+DerivedData/
+*.xcuserstate
+xcuserdata/
