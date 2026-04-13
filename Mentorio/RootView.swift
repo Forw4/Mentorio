@@ -33,6 +33,16 @@ struct RootView: View {
     @StateObject private var viewModel: MentorioViewModel
     @State private var selectedTab: AppTab = .focus
 
+    private var guardedSelection: Binding<AppTab> {
+        Binding(
+            get: { selectedTab },
+            set: { newValue in
+                // Hard lock tab navigation while One Action overlay is active.
+                selectedTab = isExecutionOverlayVisible ? .focus : newValue
+            }
+        )
+    }
+
     private var isExecutionOverlayVisible: Bool {
         viewModel.executingNoteId != nil
     }
@@ -42,7 +52,7 @@ struct RootView: View {
     }
 
     var body: some View {
-        TabView(selection: $selectedTab) {
+        TabView(selection: guardedSelection) {
             MainDashboardView()
                 .tag(AppTab.focus)
 
@@ -58,6 +68,11 @@ struct RootView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 6)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .onChange(of: isExecutionOverlayVisible) { _, visible in
+            if visible && selectedTab != .focus {
+                selectedTab = .focus
             }
         }
         .animation(.easeInOut(duration: 0.18), value: isExecutionOverlayVisible)

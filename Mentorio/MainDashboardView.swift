@@ -270,52 +270,58 @@ struct OneActionOverlay: View {
     private var holdButtonBaseColor: Color {
         colorScheme == .dark ? Color.black.opacity(0.78) : Color.black.opacity(0.74)
     }
+
+    private var overlayTint: Color {
+        colorScheme == .dark ? Color.black.opacity(0.62) : Color.black.opacity(0.36)
+    }
+
+    private var actionCardBackground: some View {
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .fill(MentorioColor.surfaceElevated)
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(MentorioColor.stroke.opacity(0.55), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.34 : 0.18), radius: 26, x: 0, y: 12)
+    }
     
     var body: some View {
         ZStack {
-            // UltraThinMaterial blur background
-            VStack {}
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(MentorioColor.scrim)
+            Rectangle()
+                .fill(overlayTint)
                 .ignoresSafeArea()
             
-            // Centered content with 60pt Dynamic Island clearance
             VStack(spacing: 0) {
-                // 60pt safe area below Dynamic Island
-                Spacer().frame(height: 60)
-                
+                Spacer().frame(height: 54)
                 Spacer()
                 
-                VStack(spacing: 32) {
-                    VStack(spacing: 24) {
-                        // Label
-                        Text("ОДИН ШАГ")
-                            .font(.system(size: 10, weight: .bold, design: .default))
-                            .tracking(2.0)
-                            .foregroundColor(MentorioColor.accent)
-                            .textCase(.uppercase)
-                        
-                        // Action command in BOLD CAPS
-                        VStack(alignment: .center, spacing: 0) {
-                            Text(action.uppercased())
-                                .font(.system(size: 24, weight: .heavy, design: .default))
-                                .foregroundColor(MentorioColor.charcoal)
-                                .multilineTextAlignment(.center)
-                                .lineLimit(5)
-                                .fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 18) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "bolt.fill")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(MentorioColor.accent)
+                            Text("One Action")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(MentorioColor.textSecondary)
                         }
-                        .frame(maxWidth: .infinity)
+
+                        Text(action)
+                            .font(.system(size: 22, weight: .semibold, design: .default))
+                            .foregroundStyle(MentorioColor.textPrimary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Text("Сделай это сейчас или оставь в фокусе")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(MentorioColor.textSecondary)
                     }
-                    .padding(32)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 22)
                     .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 20)
-                            .fill(MentorioColor.surfaceElevated)
-                            .shadow(color: Color.black.opacity(0.15), radius: 20, x: 0, y: 10)
-                    )
+                    .background(actionCardBackground)
                     .padding(.horizontal, 20)
                     
-                    // Action Buttons
                     VStack(spacing: 12) {
                         holdToCompleteButton
                         
@@ -339,9 +345,9 @@ struct OneActionOverlay: View {
                 
                 Spacer()
             }
-            .padding(.bottom, 32)
+            .padding(.bottom, 30)
         }
-        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+        .transition(.opacity.combined(with: .scale(scale: 0.97)))
         .animation(.spring(response: 0.4, dampingFraction: 0.75), value: note.state)
         .sheet(isPresented: $showRealityCheckSheet) {
             NavigationStack {
@@ -414,7 +420,7 @@ struct OneActionOverlay: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(.white)
                     Text(holdCompleted ? "" : "Зажми 3 секунды")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 11, weight: .regular))
                         .foregroundColor(.white.opacity(0.85))
                         .opacity(holdCompleted ? 0 : 1)
                 }
