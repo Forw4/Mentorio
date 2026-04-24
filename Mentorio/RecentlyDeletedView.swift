@@ -43,7 +43,9 @@ struct RecentlyDeletedView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("Недавно удаленные")
+        .scrollContentBackground(.hidden)
+        .background(MentorioColor.background)
+        .mentorioSettingsChrome(title: "Недавно удаленные")
     }
 }
 

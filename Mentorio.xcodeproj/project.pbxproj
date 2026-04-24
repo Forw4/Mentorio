@@ -6,10 +6,6 @@
 	objectVersion = 77;
 	objects = {
 
-/* Begin PBXBuildFile section */
-		E5E6F3072F8661F0000E2CEB /* API Config.xcconfig in Resources */ = {isa = PBXBuildFile; fileRef = E5E6F3062F8661F0000E2CEB /* API Config.xcconfig */; };
-/* End PBXBuildFile section */
-
 /* Begin PBXFileReference section */
 		E52F96652F80178C00C26537 /* Mentorio.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mentorio.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E5E6F3062F8661F0000E2CEB /* API Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "API Config.xcconfig"; sourceTree = "<group>"; };
@@ -97,7 +93,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1640;
-				LastUpgradeCheck = 1640;
+				LastUpgradeCheck = 2630;
 				TargetAttributes = {
 					E52F96642F80178C00C26537 = {
 						CreatedOnToolsVersion = 16.4;
@@ -128,7 +124,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E5E6F3072F8661F0000E2CEB /* API Config.xcconfig in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -205,6 +200,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -263,6 +259,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};

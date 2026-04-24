@@ -206,9 +206,7 @@ struct WeeklyReviewCardView: View {
 
     var body: some View {
         Button(action: {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
-                isExpanded.toggle()
-            }
+            isExpanded.toggle()
         }) {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .top) {
@@ -220,9 +218,11 @@ struct WeeklyReviewCardView: View {
 
                     Spacer()
 
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    Image(systemName: "chevron.down")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(MentorioColor.accent)
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                        .animation(.easeOut(duration: 0.16), value: isExpanded)
                 }
 
                 if let digest {

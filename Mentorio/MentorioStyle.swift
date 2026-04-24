@@ -60,6 +60,36 @@ extension View {
     func mentorioPaperBackground() -> some View {
         modifier(PaperBackgroundModifier())
     }
+
+    func mentorioSettingsChrome(title: String) -> some View {
+        modifier(MentorioSettingsChromeModifier(title: title))
+    }
+}
+
+struct MentorioSettingsChromeModifier: ViewModifier {
+    @Environment(\.dismiss) private var dismiss
+
+    let title: String
+
+    func body(content: Content) -> some View {
+        content
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(true)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: { dismiss() }) {
+                        Image(systemName: "chevron.left")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(MentorioColor.accent)
+                    }
+                    .accessibilityLabel("Назад")
+                }
+            }
+            .toolbarBackground(MentorioColor.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .tint(MentorioColor.accent)
+    }
 }
 
 struct ReflectingPulseView: View {

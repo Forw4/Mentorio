@@ -18,7 +18,7 @@ final class AnalyticsManager {
 
     private var events: [AnalyticsEventSnapshot] = []
     private weak var modelContext: ModelContext?
-    private let maxStoredEvents = 50
+    private let maxStoredEvents = 300
 
     private init() {}
 
@@ -28,14 +28,19 @@ final class AnalyticsManager {
     }
 
     func track(_ event: String, properties: [String: String] = [:]) {
-        let entry = AnalyticsEventSnapshot(name: event, properties: properties, timestamp: Date())
+        var normalizedProperties = properties
+        if normalizedProperties["channel"] == nil {
+            normalizedProperties["channel"] = "product"
+        }
+
+        let entry = AnalyticsEventSnapshot(name: event, properties: normalizedProperties, timestamp: Date())
         events.insert(entry, at: 0)
         if events.count > maxStoredEvents {
             events = Array(events.prefix(maxStoredEvents))
         }
 
         if let modelContext {
-            let record = AnalyticsEventRecord(name: event, properties: properties)
+            let record = AnalyticsEventRecord(name: event, properties: normalizedProperties)
             modelContext.insert(record)
             do {
                 try modelContext.save()
@@ -44,20 +49,27 @@ final class AnalyticsManager {
             }
         }
 
-        if properties.isEmpty {
+        if normalizedProperties.isEmpty {
             print("[Analytics] event=\(event)")
             return
         }
 
-        let serialized = properties
+        let serialized = normalizedProperties
             .map { "\($0.key)=\($0.value)" }
             .sorted()
             .joined(separator: ",")
         print("[Analytics] event=\(event) properties={\(serialized)}")
     }
 
-    func recentEvents(limit: Int = 20) -> [AnalyticsEventSnapshot] {
-        Array(events.prefix(limit))
+    func recentEvents(limit: Int = 20, channel: String? = nil) -> [AnalyticsEventSnapshot] {
+        let filtered: [AnalyticsEventSnapshot]
+        if let channel {
+            filtered = events.filter { $0.properties["channel"] == channel }
+        } else {
+            filtered = events
+        }
+
+        return Array(filtered.prefix(limit))
     }
 
     private func loadPersistedEvents(using modelContext: ModelContext) {

@@ -7,7 +7,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @AppStorage("userName") var userName: String = ""
-    @Environment(\.dismiss) private var dismiss
+    @AppStorage("hasSeenWelcome") private var hasSeenWelcome: Bool = false
     @FocusState private var nameFieldFocused: Bool
     
     var body: some View {
@@ -25,12 +25,14 @@ struct SettingsView: View {
                         RecentlyDeletedView()
                     } label: {
                         Label("Недавно удаленные", systemImage: "trash")
+                            .foregroundStyle(MentorioColor.textPrimary, MentorioColor.accent)
                     }
 
                     NavigationLink {
                         PrivacyView()
                     } label: {
                         Label("Приватность", systemImage: "lock.shield")
+                            .foregroundStyle(MentorioColor.textPrimary, MentorioColor.accent)
                     }
                 }
 
@@ -39,27 +41,19 @@ struct SettingsView: View {
                         DiagnosticsView()
                     } label: {
                         Label("Диагностика", systemImage: "waveform.path.ecg")
+                            .foregroundStyle(MentorioColor.textPrimary, MentorioColor.accent)
                     }
+
+                    Button("Сбросить приветствие") {
+                        hasSeenWelcome = false
+                    }
+                    .foregroundStyle(MentorioColor.textPrimary, MentorioColor.accent)
                 }
             }
+            .mentorioSettingsChrome(title: "Настройки")
         }
-        .navigationTitle("Настройки")
-        .navigationBarTitleDisplayMode(.inline)
-        .tint(MentorioColor.accent)
-        .toolbarBackground(MentorioColor.background, for: .navigationBar)
         .scrollContentBackground(.hidden)
         .background(MentorioColor.background)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Готово") {
-                    dismiss()
-                }
-                .foregroundStyle(MentorioColor.charcoal.opacity(0.7))
-            }
-        }
-        .onAppear {
-            nameFieldFocused = true
-        }
     }
 }
 

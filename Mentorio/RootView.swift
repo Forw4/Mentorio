@@ -5,6 +5,7 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
 
 private enum AppTab: Int, CaseIterable {
     case focus = 0
@@ -32,50 +33,60 @@ private enum AppTab: Int, CaseIterable {
 struct RootView: View {
     @StateObject private var viewModel: MentorioViewModel
     @State private var selectedTab: AppTab = .focus
-
-    private var guardedSelection: Binding<AppTab> {
-        Binding(
-            get: { selectedTab },
-            set: { newValue in
-                // Hard lock tab navigation while One Action overlay is active.
-                selectedTab = isExecutionOverlayVisible ? .focus : newValue
-            }
-        )
-    }
+    private static var didConfigureSegmentedControlAppearance = false
 
     private var isExecutionOverlayVisible: Bool {
         viewModel.executingNoteId != nil
     }
 
     init(modelContext: ModelContext) {
+        Self.configureSegmentedControlAppearance()
         _viewModel = StateObject(wrappedValue: MentorioViewModel(modelContext: modelContext))
     }
 
-    var body: some View {
-        TabView(selection: guardedSelection) {
-            MainDashboardView()
-                .tag(AppTab.focus)
+    private static func configureSegmentedControlAppearance() {
+        guard !didConfigureSegmentedControlAppearance else { return }
+        didConfigureSegmentedControlAppearance = true
 
-            HistoryView(archivedNotes: viewModel.archivedNotes)
-                .tag(AppTab.archive)
-        }
-        .environmentObject(viewModel)
-        .toolbar(.hidden, for: .tabBar)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        let appearance = UISegmentedControl.appearance()
+        appearance.selectedSegmentTintColor = UIColor(MentorioColor.accent)
+        appearance.backgroundColor = UIColor(MentorioColor.surface)
+        appearance.setTitleTextAttributes([
+            .foregroundColor: UIColor(MentorioColor.textPrimary)
+        ], for: .normal)
+        appearance.setTitleTextAttributes([
+            .foregroundColor: UIColor(MentorioColor.textOnAccent)
+        ], for: .selected)
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            switch selectedTab {
+            case .focus:
+                MainDashboardView()
+                    .id(AppTab.focus)
+            case .archive:
+                HistoryView(archivedNotes: viewModel.archivedNotes)
+                    .id(AppTab.archive)
+            }
+
             if !isExecutionOverlayVisible {
                 TabSwitcher(selectedTab: $selectedTab)
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 8)
                     .padding(.top, 8)
                     .padding(.bottom, 6)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .frame(maxWidth: .infinity)
+                    .background(MentorioColor.background)
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
             }
         }
+        .environmentObject(viewModel)
         .onChange(of: isExecutionOverlayVisible) { _, visible in
             if visible && selectedTab != .focus {
                 selectedTab = .focus
             }
         }
-        .animation(.easeInOut(duration: 0.18), value: isExecutionOverlayVisible)
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .background(MentorioColor.background.ignoresSafeArea())
     }
 }
@@ -84,43 +95,13 @@ private struct TabSwitcher: View {
     @Binding var selectedTab: AppTab
 
     var body: some View {
-        MaterialTabSwitcherFallback(selectedTab: $selectedTab)
-    }
-}
-
-private struct MaterialTabSwitcherFallback: View {
-    @Binding var selectedTab: AppTab
-
-    var body: some View {
-        HStack(spacing: 8) {
-            ForEach(AppTab.allCases, id: \.rawValue) { tab in
-                Button {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                        selectedTab = tab
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: tab.icon)
-                            .font(.system(size: 15, weight: .semibold))
-                        Text(tab.title)
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    .foregroundStyle(tab == selectedTab ? MentorioColor.accent : MentorioColor.textSecondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 11)
-                    .background(tab == selectedTab ? MentorioColor.accentMuted : Color.clear)
-                    .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
+        Picker("Навигация", selection: $selectedTab) {
+            ForEach(AppTab.allCases, id: \.self) { tab in
+                Text(tab.title).tag(tab)
             }
         }
-        .padding(8)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(
-            Capsule()
-                .stroke(Color.white.opacity(0.25), lineWidth: 0.8)
-        )
-        .shadow(color: Color.black.opacity(0.12), radius: 14, x: 0, y: 6)
+        .pickerStyle(.segmented)
+        .controlSize(.large)
     }
 }
 

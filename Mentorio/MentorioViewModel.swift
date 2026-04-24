@@ -9,6 +9,11 @@ import SwiftData
 
 @MainActor
 class MentorioViewModel: ObservableObject {
+    private enum EventChannel: String {
+        case product
+        case debug
+    }
+
     @Published var notes: [BraindumpNote] = []
     @Published var archivedNotes: [BraindumpNote] = []
     @Published var deletedNotes: [BraindumpNote] = []
@@ -51,12 +56,18 @@ class MentorioViewModel: ObservableObject {
         return try? modelContext.fetch(descriptor).first
     }
     
-    func addNote(_ text: String) {
+    func addNote(_ text: String, source: String = "main_input") {
         let newNote = BraindumpNote(text: text)
         modelContext.insert(newNote)  // Insert into SwiftData
         notes.insert(newNote, at: 0)
         selectedNoteId = newNote.id
-        AnalyticsManager.shared.track("braindump_started")
+        let channel: EventChannel = source == "main_input" ? .product : .debug
+        trackEvent(
+            name: "braindump_started",
+            note: newNote,
+            channel: channel,
+            props: ["entry_point": source]
+        )
         saveNotes()  // Persist immediately
     }
 
@@ -95,7 +106,7 @@ class MentorioViewModel: ObservableObject {
         do {
             try modelContext.save()
             loadNotes()
-            AnalyticsManager.shared.track("test_scenarios_cleared", properties: [
+            trackDebugEvent("test_scenarios_cleared", props: [
                 "removed": "\(matched.count)"
             ])
             return matched.count
@@ -237,11 +248,7 @@ class MentorioViewModel: ObservableObject {
         mutableNote.lastIntentRoute = intentRoute
         mutableNote.lastIsHighStakes = highStakes
         mutableNote.lastIntentUpdatedAt = Date()
-        AnalyticsManager.shared.track("intent_route_detected", properties: [
-            "route": intentRoute,
-            "high_stakes": highStakes ? "true" : "false",
-            "attempts": "\(mutableNote.clarifyingAttempts)"
-        ])
+        trackProductEvent("intent_route_detected", note: mutableNote)
         
         mutableNote.state = .analyzing
         updateNote(mutableNote)
@@ -291,43 +298,33 @@ class MentorioViewModel: ObservableObject {
         print("   question: \(response.question?.isEmpty == false ? "✓" : "✗")")
         print("   choices: \(response.choices?.isEmpty == false ? "✓ (\(response.choices?.count ?? 0))" : "✗")")
 
-        let route = note.lastIntentRoute ?? "unknown"
-        let highStakes = note.lastIsHighStakes ? "true" : "false"
-        let attempts = "\(note.clarifyingAttempts)"
-        
         // FAULT-TOLERANT LOGIC: Proceed even if some fields are null
         if let topics = response.topics, !topics.isEmpty {
             print("→ Transitioning to .needsTopic")
             note.state = .needsTopic(topics: topics)
-            AnalyticsManager.shared.track("gate_branch_triggered", properties: ["branch_type": "A"])
-            AnalyticsManager.shared.track("intent_route_outcome", properties: [
-                "route": route,
-                "high_stakes": highStakes,
-                "attempts": attempts,
+            trackDebugEvent("gate_branch_triggered", note: note, props: ["branch_type": "A"])
+            if note.selectedTopic == nil, note.userAnswer == nil, note.clarifyingAttempts == 0 {
+                trackDebugEvent("forced_topic_gate_triggered", note: note, props: [
+                    "topics_count": "\(topics.count)"
+                ])
+            }
+            trackProductEvent("intent_route_outcome", note: note, props: [
                 "outcome": "topics"
             ])
         } else if let question = response.question, !question.isEmpty {
             print("→ Transitioning to .clarifying")
             note.state = .clarifying(question: question)
-            AnalyticsManager.shared.track("gate_branch_triggered", properties: ["branch_type": "B"])
-            AnalyticsManager.shared.track("intent_route_outcome", properties: [
-                "route": route,
-                "high_stakes": highStakes,
-                "attempts": attempts,
+            trackDebugEvent("gate_branch_triggered", note: note, props: ["branch_type": "B"])
+            trackProductEvent("intent_route_outcome", note: note, props: [
                 "outcome": "question"
             ])
 
-            if route == "decision_paralysis" && note.clarifyingAttempts == 0 {
-                AnalyticsManager.shared.track("decision_research_cycle_started", properties: [
-                    "high_stakes": highStakes
-                ])
+            if note.lastIntentRoute == "decision_paralysis" && note.clarifyingAttempts == 0 {
+                trackProductEvent("decision_research_cycle_started", note: note)
             }
 
-            if route == "decision_paralysis" && note.clarifyingAttempts >= 1 {
-                AnalyticsManager.shared.track("decision_research_cycle_violation", properties: [
-                    "high_stakes": highStakes,
-                    "attempts": attempts
-                ])
+            if note.lastIntentRoute == "decision_paralysis" && note.clarifyingAttempts >= 1 {
+                trackDebugEvent("decision_research_cycle_violation", note: note)
             }
         } else if let choices = response.choices, !choices.isEmpty {
             // FAULT-TOLERANT: highlight and insight are optional now
@@ -336,20 +333,14 @@ class MentorioViewModel: ObservableObject {
             let insight = response.insight ?? ""
             print("→ Transitioning to .hasTactics with \(choices.count) choices (highlight: \(highlight.isEmpty ? "empty" : "present"), insight: \(insight.isEmpty ? "empty" : "present"))")
             note.state = .hasTactics(choices: choices, highlight: highlight, insight: insight, topics: response.topics)
-            AnalyticsManager.shared.track("gate_branch_triggered", properties: ["branch_type": "C"])
-            AnalyticsManager.shared.track("mirror_viewed")
-            AnalyticsManager.shared.track("intent_route_outcome", properties: [
-                "route": route,
-                "high_stakes": highStakes,
-                "attempts": attempts,
+            trackDebugEvent("gate_branch_triggered", note: note, props: ["branch_type": "C"])
+            trackDebugEvent("mirror_viewed", note: note)
+            trackProductEvent("intent_route_outcome", note: note, props: [
                 "outcome": "choices"
             ])
 
-            if route == "decision_paralysis" && note.clarifyingAttempts >= 1 {
-                AnalyticsManager.shared.track("decision_research_cycle_closed", properties: [
-                    "high_stakes": highStakes,
-                    "attempts": attempts
-                ])
+            if note.lastIntentRoute == "decision_paralysis" && note.clarifyingAttempts >= 1 {
+                trackProductEvent("decision_research_cycle_closed", note: note)
             }
         } else {
             // No viable state - show error but DON'T crash
@@ -357,10 +348,7 @@ class MentorioViewModel: ObservableObject {
             print("❌ \(errorMsg)")
             errorMessage = errorMsg
             note.state = .idle
-            AnalyticsManager.shared.track("intent_route_outcome", properties: [
-                "route": route,
-                "high_stakes": highStakes,
-                "attempts": attempts,
+            trackProductEvent("intent_route_outcome", note: note, props: [
                 "outcome": "invalid"
             ])
         }
@@ -407,11 +395,7 @@ class MentorioViewModel: ObservableObject {
         guard let note = notes.first(where: { $0.id == noteId }) else { return }
         note.userAnswer = answer
         note.clarifyingAttempts += 1  // SPEC: "Счётчик инкрементируется при каждом submitAnswer()"
-        AnalyticsManager.shared.track("clarification_submitted", properties: [
-            "route": note.lastIntentRoute ?? "unknown",
-            "attempts": "\(note.clarifyingAttempts)",
-            "high_stakes": note.lastIsHighStakes ? "true" : "false"
-        ])
+        trackProductEvent("clarification_submitted", note: note)
         updateNote(note)
         startTransformation(for: note)
     }
@@ -425,6 +409,10 @@ class MentorioViewModel: ObservableObject {
         if case .hasTactics(let choices, let highlight, let insight, _) = note.state {
             guard choiceIndex < choices.count else { return }
             let selectedChoice = choices[choiceIndex]
+            trackProductEvent("choice_selected", note: note, props: [
+                "choice_index": "\(choiceIndex)",
+                "choice_text": selectedChoice
+            ])
             triggerFinalAction(for: note, choice: selectedChoice, highlight: highlight, insight: insight)
         }
     }
@@ -442,9 +430,8 @@ class MentorioViewModel: ObservableObject {
         updateNote(mutableNote)
         executingNoteId = note.id
 
-        AnalyticsManager.shared.track("one_action_requested", properties: [
-            "route": note.lastIntentRoute ?? "unknown",
-            "high_stakes": note.lastIsHighStakes ? "true" : "false"
+        trackProductEvent("one_action_requested", note: note, props: [
+            "choice_text": choice
         ])
         
         Task {
@@ -453,7 +440,8 @@ class MentorioViewModel: ObservableObject {
                     for: choice,
                     braindump: note.text,
                     highlight: highlight,
-                    insight: insight
+                    insight: insight,
+                    selectedTopic: note.selectedTopic
                 )
                 
                 setExecutingAction(noteId: note.id, action: action)
@@ -470,12 +458,17 @@ class MentorioViewModel: ObservableObject {
         guard let note = notes.first(where: { $0.id == noteId }) else { return }
         note.storedAction = action
         note.state = .executing(action: action)
-        AnalyticsManager.shared.track("one_action_generated", properties: [
-            "route": note.lastIntentRoute ?? "unknown",
-            "high_stakes": note.lastIsHighStakes ? "true" : "false"
-        ])
+        trackProductEvent("one_action_generated", note: note)
         updateNote(note)
         saveContextSilently()
+    }
+
+    func trackOneActionStarted(noteId: UUID, source: String = "hold_button") {
+        guard let note = resolveNoteForTracking(noteId: noteId) else { return }
+        trackProductEvent("one_action_started", note: note, props: [
+            "source": source,
+            "hold_duration_target_sec": "3"
+        ])
     }
 
     func presentStoredActionIfAvailable(for noteId: UUID) {
@@ -494,29 +487,83 @@ class MentorioViewModel: ObservableObject {
     }
     
     func completeAction(noteId: UUID, realityCheck: RealityCheckResult) {
+        guard let note = resolveNoteForTracking(noteId: noteId) else {
+            archiveNote(id: noteId, realityCheck: realityCheck)
+            executingNoteId = nil
+            focusedNoteID = nil
+            return
+        }
+
+        trackProductEvent("reality_check_selected", note: note, props: [
+            "reality_check_value": realityCheck.rawValue
+        ])
         archiveNote(id: noteId, realityCheck: realityCheck)
-        AnalyticsManager.shared.track("action_completed")
+        trackProductEvent("one_action_completed", note: note, props: [
+            "reality_check_value": realityCheck.rawValue
+        ])
         executingNoteId = nil
         focusedNoteID = nil
     }
     
     func continueWithNextStep(for noteId: UUID) {
         guard let note = notes.first(where: { $0.id == noteId }) else { return }
+        trackProductEvent("reality_check_skipped", note: note, props: [
+            "skip_reason": "keep_in_focus"
+        ])
+        trackProductEvent("action_skipped", note: note, props: [
+            "skip_reason": "keep_in_focus"
+        ])
+
         // Reset to idle, prepare for next iteration
         note.state = .idle
         note.selectedTopic = nil
         note.userAnswer = nil
         note.selectedChoiceIndex = nil
+        note.clarifyingAttempts = 0
         note.lastIntentRoute = nil
         note.lastIsHighStakes = false
         note.lastIntentUpdatedAt = nil
         updateNote(note)
-        AnalyticsManager.shared.track("action_skipped")
         executingNoteId = nil
         focusedNoteID = nil
     }
     
     // MARK: - Helpers
+
+    private func trackProductEvent(_ name: String, note: BraindumpNote? = nil, props: [String: String] = [:]) {
+        trackEvent(name: name, note: note, channel: .product, props: props)
+    }
+
+    private func trackDebugEvent(_ name: String, note: BraindumpNote? = nil, props: [String: String] = [:]) {
+        trackEvent(name: name, note: note, channel: .debug, props: props)
+    }
+
+    private func trackEvent(
+        name: String,
+        note: BraindumpNote? = nil,
+        channel: EventChannel,
+        props: [String: String] = [:]
+    ) {
+        var finalProperties: [String: String] = ["channel": channel.rawValue]
+
+        if let note {
+            finalProperties["note_id"] = note.id.uuidString
+            finalProperties["route"] = note.lastIntentRoute ?? "unknown"
+            finalProperties["high_stakes"] = note.lastIsHighStakes ? "true" : "false"
+            finalProperties["attempts"] = "\(note.clarifyingAttempts)"
+            finalProperties["note_state"] = note.state.analyticsName
+        }
+
+        finalProperties.merge(props) { _, new in new }
+        AnalyticsManager.shared.track(name, properties: finalProperties)
+    }
+
+    private func resolveNoteForTracking(noteId: UUID) -> BraindumpNote? {
+        notes.first(where: { $0.id == noteId })
+            ?? archivedNotes.first(where: { $0.id == noteId })
+            ?? deletedNotes.first(where: { $0.id == noteId })
+            ?? fetchNote(by: noteId)
+    }
     
     @MainActor
     private func setError(_ message: String) {
@@ -598,5 +645,24 @@ class MentorioViewModel: ObservableObject {
         value
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
+    }
+}
+
+private extension NoteState {
+    var analyticsName: String {
+        switch self {
+        case .idle:
+            return "idle"
+        case .analyzing:
+            return "analyzing"
+        case .needsTopic:
+            return "needs_topic"
+        case .clarifying:
+            return "clarifying"
+        case .hasTactics:
+            return "has_tactics"
+        case .executing:
+            return "executing"
+        }
     }
 }

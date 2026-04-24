@@ -20,9 +20,8 @@ struct PrivacyView: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .mentorioSettingsChrome(title: "Приватность")
         .background(MentorioColor.paper)
-        .navigationTitle("Приватность")
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

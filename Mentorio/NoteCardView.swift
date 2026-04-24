@@ -145,7 +145,6 @@ struct NoteCardView: View {
             x: 0,
             y: 4
         )
-        .animation(.easeInOut(duration: 0.3), value: note.state)
     }
     
     // MARK: - Collapsed Card (Single-line Preview)

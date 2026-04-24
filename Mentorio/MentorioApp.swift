@@ -10,6 +10,7 @@ import UIKit
 @main
 struct MentorioApp: App {
     @AppStorage("userName") var userName: String = ""
+    @AppStorage("hasSeenWelcome") var hasSeenWelcome: Bool = false
     @Environment(\.scenePhase) private var scenePhase
     private let sharedModelContainer: ModelContainer
 
@@ -27,24 +28,29 @@ struct MentorioApp: App {
     
     var body: some Scene {
         WindowGroup {
-            Group {
-                if userName.isEmpty {
-                    OnboardingView()
+            ZStack {
+                if !hasSeenWelcome {
+                    WelcomeView()
+                        .transition(.opacity)
                 } else {
                     RootView(modelContext: sharedModelContainer.mainContext)
+                        .transition(.opacity)
                 }
             }
+            .animation(.easeInOut(duration: 0.35), value: hasSeenWelcome)
             .fontDesign(.serif)
             .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Готово") {
-                        UIApplication.shared.sendAction(
-                            #selector(UIResponder.resignFirstResponder),
-                            to: nil,
-                            from: nil,
-                            for: nil
-                        )
+                if hasSeenWelcome {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("Готово") {
+                            UIApplication.shared.sendAction(
+                                #selector(UIResponder.resignFirstResponder),
+                                to: nil,
+                                from: nil,
+                                for: nil
+                            )
+                        }
                     }
                 }
             }

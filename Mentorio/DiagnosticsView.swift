@@ -5,12 +5,63 @@
 
 import SwiftUI
 import UserNotifications
+import UIKit
 
 struct DiagnosticsView: View {
     private struct SeedScenario: Identifiable {
         let id = UUID()
         let title: String
         let prompt: String
+    }
+
+    private enum EventLogFilter: String, CaseIterable, Identifiable {
+        case all
+        case product
+        case debug
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .all:
+                return "All"
+            case .product:
+                return "Product"
+            case .debug:
+                return "Debug"
+            }
+        }
+
+        var analyticsChannel: String? {
+            switch self {
+            case .all:
+                return nil
+            case .product:
+                return "product"
+            case .debug:
+                return "debug"
+            }
+        }
+    }
+
+    private struct CoreLoopMetrics {
+        let generatedCount: Int
+        let startedCount: Int
+        let completedCount: Int
+        let completionRate: Double?
+        let realityCaptureRate: Double?
+        let avgTimeToFirstAction: TimeInterval?
+        let avgTimeToFirstCompletion: TimeInterval?
+
+        static let empty = CoreLoopMetrics(
+            generatedCount: 0,
+            startedCount: 0,
+            completedCount: 0,
+            completionRate: nil,
+            realityCaptureRate: nil,
+            avgTimeToFirstAction: nil,
+            avgTimeToFirstCompletion: nil
+        )
     }
 
     @EnvironmentObject var viewModel: MentorioViewModel
@@ -22,6 +73,12 @@ struct DiagnosticsView: View {
     @State private var seedStatus: String? = nil
     @State private var isSpawningScenarios = false
     @State private var isClearingScenarios = false
+    @State private var coreMetrics: CoreLoopMetrics = .empty
+    @State private var eventFilter: EventLogFilter = .all
+    @State private var isRunningAnchoringSuite = false
+    @State private var anchoringSuiteReport: [String] = []
+    @State private var anchoringSuiteRunAt: Date? = nil
+    @State private var copyStatus: String? = nil
 
     private let seedScenarios: [SeedScenario] = [
         SeedScenario(
@@ -92,14 +149,27 @@ struct DiagnosticsView: View {
             }
 
             Section("Аналитика (последние 20)") {
+                Picker("Канал", selection: $eventFilter) {
+                    ForEach(EventLogFilter.allCases) { filter in
+                        Text(filter.title).tag(filter)
+                    }
+                }
+                .pickerStyle(.segmented)
+
                 if analyticsEvents.isEmpty {
                     Text("События еще не зафиксированы")
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(analyticsEvents) { event in
+                        let channel = event.properties["channel"] ?? "product"
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(event.name)
-                                .font(.subheadline.weight(.semibold))
+                            HStack(spacing: 8) {
+                                Text(event.name)
+                                    .font(.subheadline.weight(.semibold))
+                                Text(channel.uppercased())
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(channel == "debug" ? .orange : .green)
+                            }
                             if !event.properties.isEmpty {
                                 Text(serializedProperties(event.properties))
                                     .font(.caption)
@@ -110,6 +180,79 @@ struct DiagnosticsView: View {
                                 .foregroundStyle(.tertiary)
                         }
                         .padding(.vertical, 2)
+                    }
+                }
+            }
+
+            Section("Core Loop Metrics") {
+                metricRow(
+                    title: "Completion Rate",
+                    value: percentString(coreMetrics.completionRate),
+                    subtitle: "\(coreMetrics.completedCount) из \(coreMetrics.generatedCount) generated"
+                )
+
+                metricRow(
+                    title: "Reality Check Capture",
+                    value: percentString(coreMetrics.realityCaptureRate),
+                    subtitle: "selected vs selected+skipped"
+                )
+
+                metricRow(
+                    title: "Time to First Action",
+                    value: durationString(coreMetrics.avgTimeToFirstAction),
+                    subtitle: "среднее: braindump_started -> one_action_started"
+                )
+
+                metricRow(
+                    title: "Time to First Completion",
+                    value: durationString(coreMetrics.avgTimeToFirstCompletion),
+                    subtitle: "среднее: braindump_started -> one_action_completed"
+                )
+
+                metricRow(
+                    title: "Notes Started",
+                    value: "\(coreMetrics.startedCount)",
+                    subtitle: "уникальные note_id с one_action_started"
+                )
+            }
+
+            Section("Context Anchoring Suite") {
+                Button(isRunningAnchoringSuite ? "Проверка в процессе..." : "Запустить regression suite") {
+                    runContextAnchoringSuite()
+                }
+                .disabled(isRunningAnchoringSuite)
+
+                if let anchoringSuiteRunAt {
+                    Text("Последний запуск: \(anchoringSuiteRunAt.formatted(date: .omitted, time: .standard))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if anchoringSuiteReport.isEmpty {
+                    Text("Suite еще не запускался")
+                        .foregroundStyle(.secondary)
+                } else {
+                    let passCount = anchoringSuiteReport.filter { $0.hasPrefix("PASS") }.count
+                    let failCount = anchoringSuiteReport.filter { $0.hasPrefix("FAIL") }.count
+
+                    Text("PASS: \(passCount), FAIL: \(failCount)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(failCount == 0 ? .green : .orange)
+
+                    Button("Скопировать отчет") {
+                        copyAnchoringSuiteReport()
+                    }
+
+                    if let copyStatus {
+                        Text(copyStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    ForEach(Array(anchoringSuiteReport.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.caption)
+                            .foregroundStyle(line.hasPrefix("PASS") ? .green : .orange)
                     }
                 }
             }
@@ -145,19 +288,114 @@ struct DiagnosticsView: View {
             }
         }
         .navigationTitle("Диагностика")
-        .navigationBarTitleDisplayMode(.inline)
+        .scrollContentBackground(.hidden)
+        .background(MentorioColor.background)
+        .mentorioSettingsChrome(title: "Диагностика")
         .task {
             await refreshData()
         }
         .refreshable {
             await refreshData()
         }
+        .onChange(of: eventFilter) { _, _ in
+            refreshAnalyticsData()
+        }
     }
 
     private func refreshData() async {
         authStatus = await NotificationManager.shared.fetchAuthorizationStatus()
         notifications = await NotificationManager.shared.fetchPendingNotifications()
-        analyticsEvents = AnalyticsManager.shared.recentEvents(limit: 20)
+        refreshAnalyticsData()
+    }
+
+    private func refreshAnalyticsData() {
+        analyticsEvents = AnalyticsManager.shared.recentEvents(
+            limit: 20,
+            channel: eventFilter.analyticsChannel
+        )
+        let productEvents = AnalyticsManager.shared.recentEvents(limit: 500, channel: "product")
+        coreMetrics = computeCoreMetrics(from: productEvents)
+    }
+
+    private func computeCoreMetrics(from events: [AnalyticsEventSnapshot]) -> CoreLoopMetrics {
+        var generatedIDs = Set<String>()
+        var startedIDs = Set<String>()
+        var completedIDs = Set<String>()
+        var realitySelectedIDs = Set<String>()
+        var realitySkippedIDs = Set<String>()
+
+        var braindumpByNote: [String: Date] = [:]
+        var actionStartedByNote: [String: Date] = [:]
+        var completedByNote: [String: Date] = [:]
+
+        for event in events {
+            guard let noteID = event.properties["note_id"], !noteID.isEmpty else { continue }
+
+            switch event.name {
+            case "braindump_started":
+                if braindumpByNote[noteID] == nil {
+                    braindumpByNote[noteID] = event.timestamp
+                }
+            case "one_action_generated":
+                generatedIDs.insert(noteID)
+            case "one_action_started":
+                startedIDs.insert(noteID)
+                if actionStartedByNote[noteID] == nil {
+                    actionStartedByNote[noteID] = event.timestamp
+                }
+            case "one_action_completed":
+                completedIDs.insert(noteID)
+                if completedByNote[noteID] == nil {
+                    completedByNote[noteID] = event.timestamp
+                }
+            case "reality_check_selected":
+                realitySelectedIDs.insert(noteID)
+            case "reality_check_skipped":
+                realitySkippedIDs.insert(noteID)
+            default:
+                continue
+            }
+        }
+
+        let completionRate: Double?
+        if generatedIDs.isEmpty {
+            completionRate = nil
+        } else {
+            completionRate = Double(completedIDs.count) / Double(generatedIDs.count)
+        }
+
+        let realityDenominator = realitySelectedIDs.union(realitySkippedIDs).count
+        let realityCaptureRate: Double?
+        if realityDenominator == 0 {
+            realityCaptureRate = nil
+        } else {
+            realityCaptureRate = Double(realitySelectedIDs.count) / Double(realityDenominator)
+        }
+
+        var tfaIntervals: [TimeInterval] = []
+        var tfcIntervals: [TimeInterval] = []
+
+        for (noteID, startDate) in braindumpByNote {
+            if let firstActionDate = actionStartedByNote[noteID], firstActionDate >= startDate {
+                tfaIntervals.append(firstActionDate.timeIntervalSince(startDate))
+            }
+            if let firstCompletionDate = completedByNote[noteID], firstCompletionDate >= startDate {
+                tfcIntervals.append(firstCompletionDate.timeIntervalSince(startDate))
+            }
+        }
+
+        let avgTFA = tfaIntervals.isEmpty ? nil : tfaIntervals.reduce(0, +) / Double(tfaIntervals.count)
+        let avgTFC = tfcIntervals.isEmpty ? nil : tfcIntervals.reduce(0, +) / Double(tfcIntervals.count)
+
+        return CoreLoopMetrics(
+            generatedCount: generatedIDs.count,
+            startedCount: startedIDs.count,
+            completedCount: completedIDs.count,
+            completionRate: completionRate,
+            realityCaptureRate: realityCaptureRate,
+            avgTimeToFirstAction: avgTFA,
+            avgTimeToFirstCompletion: avgTFC
+        )
     }
 
     private func authorizationLabel(_ status: UNAuthorizationStatus) -> String {
@@ -184,6 +422,39 @@ struct DiagnosticsView: View {
             .joined(separator: ", ")
     }
 
+    private func metricRow(title: String, value: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(value)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+            }
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func percentString(_ value: Double?) -> String {
+        guard let value else { return "-" }
+        return "\(Int((value * 100).rounded()))%"
+    }
+
+    private func durationString(_ interval: TimeInterval?) -> String {
+        guard let interval else { return "-" }
+        let totalSeconds = Int(interval.rounded())
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
+        if minutes == 0 {
+            return "\(seconds)с"
+        }
+        return "\(minutes)м \(seconds)с"
+    }
+
     @MainActor
     private func spawnSeedScenarios() {
         isSpawningScenarios = true
@@ -203,13 +474,14 @@ struct DiagnosticsView: View {
                 continue
             }
 
-            viewModel.addNote(scenario.prompt)
+            viewModel.addNote(scenario.prompt, source: "diagnostics_seed")
             existing.insert(normalizedPrompt)
             added += 1
         }
 
         seedStatus = "Добавлено: \(added), пропущено (уже были): \(skipped). Проверь основной экран заметок."
         AnalyticsManager.shared.track("diagnostics_seed_scenarios_spawned", properties: [
+            "channel": "debug",
             "added": "\(added)",
             "skipped": "\(skipped)",
             "total": "\(seedScenarios.count)"
@@ -230,6 +502,7 @@ struct DiagnosticsView: View {
         }
 
         AnalyticsManager.shared.track("diagnostics_seed_scenarios_cleared", properties: [
+            "channel": "debug",
             "removed": "\(removed)",
             "total": "\(seedScenarios.count)"
         ])
@@ -241,6 +514,42 @@ struct DiagnosticsView: View {
         value
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
+    }
+
+    @MainActor
+    private func runContextAnchoringSuite() {
+        isRunningAnchoringSuite = true
+        copyStatus = nil
+
+        #if DEBUG
+        let report = MentorioAIService.runContextAnchoringRegressionSuite()
+        anchoringSuiteReport = report
+        anchoringSuiteRunAt = Date()
+
+        let failCount = report.filter { $0.hasPrefix("FAIL") }.count
+        AnalyticsManager.shared.track("diagnostics_context_anchoring_suite_run", properties: [
+            "channel": "debug",
+            "cases": "\(report.count)",
+            "fails": "\(failCount)"
+        ])
+        #else
+        anchoringSuiteReport = ["FAIL: suite_available_only_in_debug_build"]
+        anchoringSuiteRunAt = Date()
+        #endif
+
+        isRunningAnchoringSuite = false
+    }
+
+    @MainActor
+    private func copyAnchoringSuiteReport() {
+        guard !anchoringSuiteReport.isEmpty else {
+            copyStatus = "Нечего копировать"
+            return
+        }
+
+        let reportText = anchoringSuiteReport.joined(separator: "\n")
+        UIPasteboard.general.string = reportText
+        copyStatus = "Отчет скопирован"
     }
 }
 

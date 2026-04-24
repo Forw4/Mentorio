@@ -263,4 +263,3 @@ class MentorioSession: Identifiable {
     }
 }
 
-extension MentorioSession: @unchecked Sendable {}

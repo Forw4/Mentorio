@@ -30,17 +30,27 @@ struct MainDashboardView: View {
                             HStack {
                                 Spacer()
 
-                                Button(action: {
-                                    showSettings = true
-                                }) {
-                                    Image(systemName: "gearshape")
-                                        .font(.system(size: 18, weight: .semibold))
-                                        .foregroundColor(MentorioColor.textPrimary)
-                                        .frame(width: 32, height: 32)
-                                        .background(MentorioColor.surface)
-                                        .clipShape(Circle())
+                                if #available(iOS 26.0, *) {
+                                    Button(action: {
+                                        showSettings = true
+                                    }) {
+                                        Image(systemName: "gearshape")
+                                            .font(.system(size: 18, weight: .semibold))
+                                    }
+                                    .buttonStyle(.glass)
+                                } else {
+                                    Button(action: {
+                                        showSettings = true
+                                    }) {
+                                        Image(systemName: "gearshape")
+                                            .font(.system(size: 18, weight: .semibold))
+                                            .foregroundColor(MentorioColor.textPrimary)
+                                            .frame(width: 32, height: 32)
+                                            .background(MentorioColor.surface)
+                                            .clipShape(Circle())
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
                             }
 
                             Text("Mentorio")
@@ -121,7 +131,6 @@ struct MainDashboardView: View {
                                             }
                                         )
                                         .id(note.id)
-                                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                                     }
                                 }
                                 .padding(MentorioMetric.spaceL)
@@ -151,7 +160,7 @@ struct MainDashboardView: View {
                     }
                 }
             }
-            .blur(radius: viewModel.executingNoteId != nil ? 3 : 0)
+            .blur(radius: 0)
             .opacity(viewModel.executingNoteId != nil ? 0.82 : 1.0)
             .allowsHitTesting(viewModel.executingNoteId == nil)
             .animation(.easeInOut(duration: 0.22), value: viewModel.executingNoteId)
@@ -165,7 +174,6 @@ struct MainDashboardView: View {
                     note: note,
                     viewModel: viewModel
                 )
-                .transition(.scale(scale: 0.8).combined(with: .opacity))
                 .zIndex(100)
             }
             
@@ -219,7 +227,6 @@ struct MainDashboardView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 20)
-                .transition(.move(edge: .top).combined(with: .opacity))
                 .zIndex(101)
             }
         }
@@ -347,8 +354,6 @@ struct OneActionOverlay: View {
             }
             .padding(.bottom, 30)
         }
-        .transition(.opacity.combined(with: .scale(scale: 0.97)))
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: note.state)
         .sheet(isPresented: $showRealityCheckSheet) {
             NavigationStack {
                 VStack(spacing: 18) {
@@ -465,6 +470,7 @@ struct OneActionOverlay: View {
         holdProgress = 0
         holdCompleted = false
         lastHapticStep = 0
+        viewModel.trackOneActionStarted(noteId: note.id)
 
         let generator = UIImpactFeedbackGenerator(style: .rigid)
         generator.prepare()
