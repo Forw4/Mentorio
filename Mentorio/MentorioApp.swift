@@ -1,70 +1,61 @@
-//
-//  MentorioApp.swift
-//  Mentorio
-//
-
 import SwiftUI
-import SwiftData
-import UIKit
 
 @main
 struct MentorioApp: App {
-    @AppStorage("userName") var userName: String = ""
-    @AppStorage("hasSeenWelcome") var hasSeenWelcome: Bool = false
-    @Environment(\.scenePhase) private var scenePhase
-    private let sharedModelContainer: ModelContainer
+    @AppStorage("hasSeenWelcome") private var hasSeenWelcome: Bool = false
 
-    init() {
-        do {
-            sharedModelContainer = try ModelContainer(
-                for: BraindumpNote.self,
-                MentorioSession.self,
-                AnalyticsEventRecord.self
-            )
-        } catch {
-            preconditionFailure("Failed to initialize SwiftData container: \(error)")
-        }
-    }
-    
     var body: some Scene {
         WindowGroup {
-            ZStack {
+            Group {
                 if !hasSeenWelcome {
-                    WelcomeView()
-                        .transition(.opacity)
+                    WelcomeGateView(hasSeenWelcome: $hasSeenWelcome)
                 } else {
-                    RootView(modelContext: sharedModelContainer.mainContext)
-                        .transition(.opacity)
+                    RootView()
                 }
             }
-            .animation(.easeInOut(duration: 0.35), value: hasSeenWelcome)
-            .fontDesign(.serif)
-            .toolbar {
-                if hasSeenWelcome {
-                    ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
-                        Button("Готово") {
-                            UIApplication.shared.sendAction(
-                                #selector(UIResponder.resignFirstResponder),
-                                to: nil,
-                                from: nil,
-                                for: nil
-                            )
-                        }
-                    }
-                }
-            }
-            .tint(MentorioColor.accent)
-            .onAppear {
-                NotificationManager.shared.requestPermissionIfNeeded()
-                NotificationManager.shared.handleAppBecameActive()
-            }
-            .onChange(of: scenePhase) { _, newPhase in
-                if newPhase == .active {
-                    NotificationManager.shared.handleAppBecameActive()
-                }
-            }
+            .preferredColorScheme(.dark)
+            .background(MentorioTheme.background.ignoresSafeArea())
+            .tint(MentorioTheme.accent)
         }
-        .modelContainer(sharedModelContainer)
+    }
+}
+
+private struct WelcomeGateView: View {
+    @Binding var hasSeenWelcome: Bool
+
+    var body: some View {
+        ZStack {
+            MentorioTheme.background.ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 20) {
+                Spacer()
+
+                Text("Mentorio")
+                    .font(.largeTitle.bold())
+                    .fontDesign(.serif)
+                    .foregroundStyle(.white)
+
+                Text("Minimal tool for action over procrastination.")
+                    .font(.body)
+                    .foregroundStyle(.white.opacity(0.78))
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        hasSeenWelcome = true
+                    }
+                } label: {
+                    Text("Start")
+                        .font(.headline)
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(MentorioTheme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 24)
+        }
     }
 }
