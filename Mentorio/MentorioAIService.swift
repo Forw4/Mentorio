@@ -19,13 +19,14 @@ struct FocusResponse: Codable {
 // MARK: - OpenRouter Request/Response Models
 
 struct ChatRequest: Encodable {
-	let model: String
-	let messages: [ChatMessage]
+    let model: String
+    let messages: [ChatMessage]
+    let max_tokens: Int   // ← новое поле
 
-	struct ChatMessage: Encodable {
-		let role: String
-		let content: String
-	}
+    struct ChatMessage: Encodable {
+        let role: String
+        let content: String
+    }
 }
 
 struct ChatResponse: Decodable {
@@ -74,6 +75,11 @@ enum MentorioAIService {
 	}
 
 	private static func apiKey() throws -> String {
+		let customKey = UserDefaults.standard.string(forKey: "customOpenRouterKey") ?? ""
+		if !customKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+			return customKey.trimmingCharacters(in: .whitespacesAndNewlines)
+		}
+
 		guard let key = Bundle.main.infoDictionary?["OPENROUTER_API_KEY"] as? String,
 			  !key.isEmpty else {
 			throw MentorioAIError.missingAPIKey
@@ -82,7 +88,7 @@ enum MentorioAIService {
 	}
 
 	private static let endpoint = "https://openrouter.ai/api/v1/chat/completions"
-	private static let model = "google/gemini-2.0-flash-001"
+    private static let model = "anthropic/claude-haiku-4.5"
 
 	// MARK: - Public API (Signatures preserved)
 
@@ -133,25 +139,20 @@ enum MentorioAIService {
 		for text: String,
 		selectedTopic: String? = nil,
 		userAnswer: String? = nil,
-		clarifyingAttempts: Int = 0
+		clarifyingAttempts: Int = 0,
+        isFastTrack: Bool = false,
+        contextSummary: String? = nil
 	) async throws -> FocusResponse {
-		let analysis = try await analyzeIntent(
-			text: text,
-			selectedTopic: selectedTopic,
-			userAnswer: userAnswer
-		)
-
-		let key = cacheKey(text: text, selectedTopic: selectedTopic, userAnswer: userAnswer)
-		intentCacheQueue.sync {
-			intentCache[key] = analysis
-		}
-
+        // Stage A (analyzeIntent) removed in Sprint 3 (#6).
+        // It was a second API call used only to pass intent.rawValue into the prompt.
+        // The Stage B prompt already has full context via Priority Rules.
 		let prompt = buildFocusPrompt(
 			text: text,
 			selectedTopic: selectedTopic,
 			userAnswer: userAnswer,
 			clarifyingAttempts: clarifyingAttempts,
-			analysis: analysis
+            isFastTrack: isFastTrack,
+            contextSummary: contextSummary
 		)
 
 		let raw = try await requestChatCompletion(prompt: prompt)
@@ -171,39 +172,40 @@ enum MentorioAIService {
 		insight: String,
 		selectedTopic: String? = nil
 	) async throws -> String {
-		let key = cacheKey(text: braindump, selectedTopic: selectedTopic, userAnswer: nil)
-		let cached = intentCacheQueue.sync(execute: { intentCache[key] })
-		let highStakesHint = cached?.isHighStakes == true
-			? "HIGH-STAKES MODE: stay strictly within the selected focus and choice; first step must be reversible and fact-checking."
-			: ""
+        // intentCache lookup removed: Stage A no longer runs, cache is always empty (#6).
 
 		let prompt = """
-		Ты — Mentorio, прямой и приземленный ментор по поведенческой активации.
-		Твоя задача: дать ОДНО выполнимое физическое действие на 10–15 минут.
-
-		Контекст пользователя:
-		— Брайндамп: \(braindump)
-		— Ключевая фраза (highlight): \(highlight)
-		— Фактическая ситуация (insight): \(insight)
-		— Выбранная тактика (choice): \(choice)
-		— Выбранный фокус (selected_topic): \(selectedTopic ?? "[не выбран]")
-
-		ЖЁСТКОЕ ПРАВИЛО ФОКУСА:
-		- Игнорируй все другие темы из брайндампа, кроме выбранной тактики и выбранного фокуса.
-		- Действие должно продвигать ТОЛЬКО тактику "\(choice)" в рамках выбранной темы.
-		- Если выбор про квартиру — не трогай музыку и язык. Если выбор про музыку — не трогай квартиру и прочее.
-
-		ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:
-		- Действие должно оставлять наблюдаемый артефакт во внешнем мире (файл, заметка, сообщение, заявка, сохранённый вариант и т.п.).
-		- Начни с глагола прямого действия (открой, напиши, отправь, создай, запусти).
-		- Лимит времени 10–15 минут.
-		- Никаких капитальных коммитов в первом шаге (не покупать, не увольняться, не подписывать договор, не переезжать).
-		\(highStakesHint)
-
-		ФОРМАТ ОТВЕТА:
-		- Ровно одна команда.
-		- Без кавычек, без точки в конце, без пояснений и нумерации.
-		"""
+  Ты — Mentorio, прямой и приземленный ментор по поведенческой активации.
+  Твоя задача: дать ОДНО выполнимое физическое действие на 10–15 минут.
+  
+  Контекст пользователя:
+  — Брайндамп: \(braindump)
+  — Ключевая фраза (highlight): \(highlight)
+  — Фактическая ситуация (insight): \(insight)
+  — Выбранная тактика (choice): \(choice)
+  — Выбранный фокус (selected_topic): \(selectedTopic ?? "[не выбран]")
+  
+  ЖЁСТКОЕ ПРАВИЛО ФОКУСА:
+  - Игнорируй все другие темы из брайндампа, кроме выбранной тактики и выбранного фокуса.
+  - Действие должно продвигать ТОЛЬКО тактику "\(choice)" в рамках выбранной темы.
+  - Если выбор про квартиру — не трогай музыку и язык. Если выбор про музыку — не трогай квартиру и прочее.
+  
+  ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:
+          - Действие должно оставлять наблюдаемый артефакт во внешнем мире (файл, заметка, сообщение, заявка, сохранённый вариант и т.п.).
+          - Начни с глагола прямого действия (открой, напиши, отправь, создай, запусти).
+          - Лимит времени 10–15 минут.
+          - Никаких капитальных коммитов в первом шаге (не покупать, не увольняться, не подписывать договор, не переезжать).
+  
+          КРИТИЧЕСКОЕ ПРАВИЛО (POINT OF NO RETURN):
+          - Это финальный этап. ТЕБЕ СТРОГО ЗАПРЕЩЕНО ЗАДАВАТЬ ЛЮБЫЕ ВОПРОСЫ.
+          - СТРОГО ЗАПРЕЩЕНО предлагать обсудить, уточнить детали или продолжать диалог.
+          - Если твой ответ содержит знак вопроса "?" — это критическая ошибка.
+  
+          ФОРМАТ ОТВЕТА (СТРОГО):
+          - Только ОДНА прямая команда-действие.
+          - Без приветствий, без пояснений, без точек в конце, без кавычек и нумерации.
+  
+  """
 
 		let raw = try await requestChatCompletion(prompt: prompt)
 		let cleaned = sanitizePlainText(raw)
@@ -212,6 +214,29 @@ enum MentorioAIService {
 		}
 		return cleaned
 	}
+
+    static func summarizeContext(
+        braindump: String,
+        history: [ChatRequest.ChatMessage]
+    ) async throws -> String {
+        let historyText = history.map { "\($0.role == "user" ? "Юзер" : "Ментор"): \($0.content)" }.joined(separator: "\n")
+        
+        let prompt = """
+        Сформируй краткое резюме ситуации пользователя (2–3 предложения, максимум 60–80 слов).
+        Кто он, в чем главная проблема, какая цель.
+        Используй только факты из текста.
+        Не добавляй интерпретаций и советов.
+        Не используй обращений по имени, если оно не указано явно.
+
+        Входные данные:
+        — Брайндамп: \(braindump)
+        — Фрагменты диалога:
+        \(historyText)
+        """
+        
+        let raw = try await requestChatCompletion(prompt: prompt)
+        return sanitizePlainText(raw)
+    }
 
 	// MARK: - Intent Analysis (Stage A)
 
@@ -266,107 +291,63 @@ enum MentorioAIService {
 		selectedTopic: String?,
 		userAnswer: String?,
 		clarifyingAttempts: Int,
-		analysis: IntentAnalysis
+        isFastTrack: Bool,
+        contextSummary: String?
+        // analysis: IntentAnalysis removed — Stage A was removed in Sprint 3 (#6)
 	) -> String {
-		let missingInfoHint = analysis.missingInfo != nil
-			? "Недостающие данные: \(analysis.missingInfo!)"
-			: "Недостающие данные: null"
-
-		if selectedTopic?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
-			return """
-			OUTPUT ONLY VALID JSON. ZERO CONVERSATIONAL TEXT. NO MARKDOWN. NO EXPLANATIONS.
-
-			Ты — Mentorio. Жесткий, структурный ментор. Твоя задача — не обсуждать жизнь в целом, а вытащить 1 фокус и перевести его в физическое действие.
-
-			ФОРМАТ ОБЪЕКТА (СТРОГО):
-			{
-			  "topics": null или ["Тема 1", "Тема 2", "Тема 3"],
-			  "highlight": null или "точная цитата из текста юзера",
-			  "insight": null или "1-2 фактических предложения",
-			  "question": null или "уточняющий вопрос",
-			  "choices": null или ["Вариант 1", "Вариант 2"]
-			}
-
-			ЛОГИКА ВЫБОРА РЕЖИМА:
-
-			1) Если в тексте 2+ независимых направлений (например: жильё, музыка, язык, учеба):
-			   - Верни только:
-			     - "topics": список коротких ярлыков (2–4 слова) по этим направлениям,
-			     - "highlight": одна фраза, которая честно подводит итог,
-			     - "insight": 1–2 факта про общий паттерн (например, избегание действий).
-			   - "choices": null
-			   - "question": null
-
-			2) Если в тексте по сути одно доминирующее направление:
-			   - "topics": null
-			   - "highlight": точная цитата
-			   - "insight": факт
-			   - "choices": РОВНО 2 варианта для ЭТОЙ темы
-			   - "question": либо null, либо один короткий уточняющий вопрос (если без него нельзя двигаться дальше).
-
-			ПРАВИЛА ДЛЯ topics:
-			- Каждая тема — от 2 до 4 слов, без сложных оборотов.
-			- Темы — это ярлыки фокуса ("поиск квартиры", "музыка / треки", "сербский язык").
-			- Не делай больше 3 тем. Если направлений больше — выбери 2–3 самых явных конфликта.
-
-			ПРАВИЛА ДЛЯ choices (если они всё-таки нужны на этом шаге):
-			- Ровно 2 варианта.
-			- Только физические действия на 10–15 минут.
-			- Каждый вариант заканчивается артефактом (файл, заметка, сообщение, заявка, сохранённый вариант).
-			- Без капитальных коммитов в первом шаге.
-
-			Контекст:
-			— Intent: \(analysis.intent.rawValue)
-			— High-stakes: \(analysis.isHighStakes)
-			— \(missingInfoHint)
-			— Clarifying attempts: \(clarifyingAttempts)
-
-			Текст пользователя:
-			\(text)
-
-			Selected topic:
-			\(selectedTopic ?? "[нет]")
-
-			User answer:
-			\(userAnswer ?? "[нет]")
-			"""
-		}
-
 		return """
-		OUTPUT ONLY VALID JSON. ZERO CONVERSATIONAL TEXT. NO MARKDOWN. NO EXPLANATIONS.
-
-		Ты — Mentorio. Сейчас пользователь уже выбрал фокус: работай ТОЛЬКО с этой темой и игнорируй остальные части брайндампа.
-
-		ФОРМАТ ОБЪЕКТА (СТРОГО):
-		{
-		  "topics": null,
-		  "highlight": null или "точная цитата из текста юзера",
-		  "insight": null или "1-2 фактических предложения",
-		  "question": null или "уточняющий вопрос",
-		  "choices": null или ["Вариант 1", "Вариант 2"]
-		}
-
-		ПРАВИЛА:
-		- Игнорируй все другие темы из текста, кроме выбранной.
-		- Не возвращай topics, только highlight/insight/question/choices.
-		- choices: Ровно 2 варианта, оба про ОДНУ выбранную тему.
-		- Только физические действия на 10–15 минут.
-		- Каждый вариант заканчивается артефактом (файл, заметка, сообщение, заявка, сохранённый вариант).
-		- Без капитальных коммитов в первом шаге.
-		- Никаких когнитивных команд ("подумай", "проанализируй", "прикинь").
-
-		Контекст:
-		— Выбранная тема (selected_topic): \(selectedTopic ?? "[не выбран]")
-		— Intent: \(analysis.intent.rawValue)
-		— High-stakes: \(analysis.isHighStakes)
-		— Clarifying attempts: \(clarifyingAttempts)
-
-		Исходный текст пользователя:
-		\(text)
-
-		User answer:
-		\(userAnswer ?? "[нет]")
-		"""
+        OUTPUT ONLY VALID JSON. ZERO CONVERSATIONAL TEXT. NO MARKDOWN.
+        
+        Ты — Mentorio, жесткий ментор по поведенческой активации. Твоя задача — перевести хаос мыслей пользователя в одну конкретную физическую тактику и затем в действие на 10–15 минут.
+        
+        ФОРМАТ ОТВЕТА:
+        {
+          "topics": null или ["Тема 1", "Тема 2"],
+          "highlight": null или "точная цитата пользователя",
+          "insight": null или "1-2 фактических предложения",
+          "question": null или "короткий уточняющий вопрос",
+          "choices": null или ["Тактика 1", "Тактика 2"]
+        }
+        
+        PRIORITY RULES (APPLY IN THIS ORDER):
+        
+        1. TOPICS:
+           IF selected_topic == null AND multiple problems in text:
+           - Return only "topics" (2-3 labels), optional "highlight"/"insight".
+           - "question" and "choices" MUST be null.
+        
+        2. FORCED_CHOICES:
+           IF attempts >= 2 OR is_fast_track == true:
+           - "question" MUST be null.
+           - "choices" MUST contain exactly 2 tactics.
+        
+        3. CLARIFICATION:
+           IF selected_topic != null AND attempts < 2 AND is_fast_track == false:
+           - You MAY return one short factual "question".
+           - If you ask a question, "choices" MUST be null.
+        
+        4. CHOICES_FORMAT:
+           IF "choices" is not null:
+           - Exactly 2 items, imperative commands (10-15 minutes, ending with external artifact).
+           - Forbidden phrases: "как насчет", "может быть", "попробуй".
+        
+        5. NO_SOFT_COACHING:
+           - Do not use empathy/support phrases ("я понимаю", "это нормально").
+           - Be dry, direct, and factual.
+        
+        ТЕХНИЧЕСКИЙ КОНТЕКСТ:
+        — Selected Topic: \(selectedTopic ?? "null")
+        — Clarifying attempts: \(clarifyingAttempts)
+        — Is Fast-Track: \(isFastTrack)
+        — Context Summary: \(contextSummary ?? "[Нет резюме, используй исходный текст]")
+        
+        ИСХОДНЫЕ ДАННЫЕ ЮЗЕРА:
+        Брайндамп:
+        \(text)
+        
+        Последний ответ:
+        \(userAnswer ?? "null")
+        """
 	}
 
 	// MARK: - Networking (same as old)
@@ -396,22 +377,59 @@ enum MentorioAIService {
 		return data
 	}
 
-	private static func requestChatCompletion(prompt: String) async throws -> String {
-		let body = ChatRequest(
-			model: model,
-			messages: [ChatRequest.ChatMessage(role: "user", content: prompt)]
-		)
+    // MARK: - Sliding Window Context Helper
+    
+    private static let systemPersona = "Ты — Mentorio, жесткий, но заботливый ментор по поведенческой активации. Отвечай максимально кратко, без вежливости и вводных фраз. Не пиши 'привет', 'конечно' и 'давай разберемся'. Твой лимит — 3 предложения. Сразу переходи к сути ответа."
 
-		let requestData = try JSONEncoder().encode(body)
-		let responseData = try await postToOpenRouter(requestBody: requestData)
+    static func buildMessages(
+        currentPrompt: String,
+        history: [ChatRequest.ChatMessage] = [],
+        summary: String? = nil
+    ) -> [ChatRequest.ChatMessage] {
+        var messages: [ChatRequest.ChatMessage] = []
+        
+        // 1. Системный промпт (всегда первый)
+        messages.append(ChatRequest.ChatMessage(role: "system", content: systemPersona))
+        
+        // 1.5. Резюме контекста (если есть)
+        if let summary = summary, !summary.isEmpty {
+            messages.append(ChatRequest.ChatMessage(role: "system", content: "Контекст ситуации: \(summary)"))
+        }
+        
+        // 2. Скользящее окно (последние 4 реплики из истории)
+        let windowSize = 4
+        let recentHistory = history.suffix(windowSize)
+        messages.append(contentsOf: recentHistory)
+        
+        // 3. Текущий запрос пользователя
+        messages.append(ChatRequest.ChatMessage(role: "user", content: currentPrompt))
+        
+        return messages
+    }
 
-		let decoded = try JSONDecoder().decode(ChatResponse.self, from: responseData)
-		guard let text = decoded.choices.first?.message.content,
-			  !text.isEmpty else {
-			throw MentorioAIError.emptyResponse
-		}
-		return text
-	}
+    private static func requestChatCompletion(
+        prompt: String, 
+        history: [ChatRequest.ChatMessage] = [],
+        summary: String? = nil
+    ) async throws -> String {
+        let messages = buildMessages(currentPrompt: prompt, history: history, summary: summary)
+
+        let body = ChatRequest(
+            model: model,
+            messages: messages,
+            max_tokens: 400    // лимит токенов для ответа
+        )
+
+        let requestData = try JSONEncoder().encode(body)
+        let responseData = try await postToOpenRouter(requestBody: requestData)
+
+        let decoded = try JSONDecoder().decode(ChatResponse.self, from: responseData)
+        guard let text = decoded.choices.first?.message.content,
+              !text.isEmpty else {
+            throw MentorioAIError.emptyResponse
+        }
+        return text
+    }
 
 	// MARK: - Sanitizers (basic only)
 

@@ -288,9 +288,9 @@ struct DiagnosticsView: View {
             }
         }
         .navigationTitle("Диагностика")
+        .navigationBarTitleDisplayMode(.inline)
         .scrollContentBackground(.hidden)
-        .background(MentorioColor.background)
-        .mentorioSettingsChrome(title: "Диагностика")
+        .background(Color(red: 0.051, green: 0.051, blue: 0.051))
         .task {
             await refreshData()
         }

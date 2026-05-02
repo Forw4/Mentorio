@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 enum AppTab: Hashable {
     case focus
@@ -6,8 +7,21 @@ enum AppTab: Hashable {
 }
 
 struct RootView: View {
-    @StateObject private var viewModel = NotesViewModel()
+    @StateObject private var viewModel: MentorioViewModel
     @State private var selectedTab: AppTab = .focus
+
+    init() {
+        do {
+            let container = try ModelContainer(
+                for: BraindumpNote.self,
+                MentorioSession.self,
+                AnalyticsEventRecord.self
+            )
+            _viewModel = StateObject(wrappedValue: MentorioViewModel(modelContext: ModelContext(container)))
+        } catch {
+            fatalError("Failed to initialize SwiftData container: \(error)")
+        }
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -17,7 +31,7 @@ struct RootView: View {
                 }
                 .tag(AppTab.focus)
 
-            ArchiveView(viewModel: viewModel)
+            ArchiveView()
                 .tabItem {
                     Label("Archive", systemImage: "archivebox")
                 }
@@ -25,6 +39,7 @@ struct RootView: View {
         }
         .preferredColorScheme(.dark)
         .background(MentorioTheme.background.ignoresSafeArea())
+        .environmentObject(viewModel)
     }
 }
 

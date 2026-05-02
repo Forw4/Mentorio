@@ -2,7 +2,7 @@ import SwiftUI
 import PhotosUI
 
 struct WinStateView: View {
-    @ObservedObject var viewModel: NotesViewModel
+    @ObservedObject var viewModel: MentorioViewModel
     let noteID: UUID
     let onToArchive: () -> Void
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
@@ -19,8 +19,8 @@ struct WinStateView: View {
                     .font(.system(size: 44, weight: .black, design: .serif))
                     .foregroundStyle(.white)
 
-                if let note = viewModel.note(for: noteID) {
-                    Text(note.text)
+                if let note = (viewModel.notes + viewModel.archivedNotes).first(where: { $0.id == noteID }) {
+                    Text(note.finalAction ?? note.storedAction ?? note.text)
                         .font(.headline)
                         .foregroundStyle(.white.opacity(0.84))
                         .multilineTextAlignment(.center)
@@ -49,7 +49,10 @@ struct WinStateView: View {
                     Task {
                         if let data = try? await newItem?.loadTransferable(type: Data.self) {
                             selectedPhotoData = data
-                            viewModel.setArtifactImageName(noteID: noteID, name: "local")
+                            if let note = (viewModel.notes + viewModel.archivedNotes).first(where: { $0.id == noteID }) {
+                                note.photoData = data
+                                note.completionProof = "local"
+                            }
                             onToArchive()
                         }
                     }
@@ -73,6 +76,6 @@ struct WinStateView: View {
 }
 
 #Preview {
-    WinStateView(viewModel: NotesViewModel(), noteID: UUID(), onToArchive: {})
+    WinStateView(viewModel: makePreviewViewModel(), noteID: UUID(), onToArchive: {})
         .preferredColorScheme(.dark)
 }

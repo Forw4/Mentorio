@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ArchiveView: View {
-    @ObservedObject var viewModel: NotesViewModel
+    @EnvironmentObject var viewModel: MentorioViewModel
     @State private var selectedNoteID: UUID?
 
     private let columns = [
@@ -16,18 +16,12 @@ struct ArchiveView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("АРХИВ")
-                                .font(.system(size: 10, weight: .medium, design: .default))
-                                .tracking(1.4)
-                                .foregroundStyle(Color(red: 0.333, green: 0.333, blue: 0.333))
+                        Text("Essential Space")
+                            .font(.largeTitle.bold())
+                            .fontDesign(.serif)
+                            .foregroundStyle(.white)
 
-                            Text("Essential Space")
-                                .font(.system(size: 28, weight: .bold, design: .serif))
-                                .foregroundStyle(.white)
-                        }
-
-                        if viewModel.archived.isEmpty {
+                        if viewModel.archivedNotes.isEmpty {
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
                                 .fill(MentorioTheme.card)
                                 .frame(height: 110)
@@ -38,7 +32,7 @@ struct ArchiveView: View {
                                 )
                         } else {
                             LazyVGrid(columns: columns, spacing: 12) {
-                                ForEach(viewModel.archived) { note in
+                                ForEach(viewModel.archivedNotes) { note in
                                     ArchiveCard(note: note)
                                         // TODO: matchedGeometryEffect
                                         .onTapGesture {
@@ -58,7 +52,7 @@ struct ArchiveView: View {
                 .disabled(selectedNoteID != nil)
 
                      if let noteID = selectedNoteID,
-                   let noteBinding = viewModel.binding(for: noteID) {
+                         let note = viewModel.archivedNotes.first(where: { $0.id == noteID }) {
                     ZStack {
                         Color.black.opacity(0.3)
                             .background(.ultraThinMaterial)
@@ -69,7 +63,7 @@ struct ArchiveView: View {
                                 }
                             }
 
-                        ArchiveDetailView(note: noteBinding, selectedNoteID: $selectedNoteID)
+                        ArchiveDetailView(note: note, selectedNoteID: $selectedNoteID)
                             .background(Color(red: 0.05, green: 0.05, blue: 0.05))
                             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                             .padding(.horizontal, 16)
@@ -87,14 +81,22 @@ struct ArchiveView: View {
 }
 
 private struct ArchiveCard: View {
-    let note: Note
+    @Bindable var note: BraindumpNote
 
     private var dateText: String {
-        ArchiveCard.dateFormatter.string(from: note.createdAt)
+        ArchiveCard.dateFormatter.string(from: note.completedAt ?? note.createdAt)
     }
 
     private var actionText: String {
-        note.oneActionText.isEmpty ? note.text : note.oneActionText
+        note.finalAction ?? note.storedAction ?? note.text
+    }
+
+    private var hasArtifact: Bool {
+        (note.completionProof ?? "").isEmpty == false
+    }
+
+    private var hasReflection: Bool {
+        (note.userClarification ?? "").isEmpty == false
     }
 
     var body: some View {
@@ -136,11 +138,11 @@ private struct ArchiveCard: View {
     @ViewBuilder
     private var statusBadges: some View {
         HStack(spacing: 6) {
-            if note.artifactImageName != nil {
+            if hasArtifact {
                 artifactBadge
             }
 
-            if note.reflectionStatus == .completed {
+            if hasReflection {
                 reflectionBadge
             }
         }
@@ -161,7 +163,7 @@ private struct ArchiveCard: View {
     }
 
     private var reflectionBadge: some View {
-        Text("РАЗОБРАНО")
+        Text("ЗАМЕТКА")
             .font(.system(size: 9, weight: .semibold, design: .default))
             .foregroundStyle(Color.mentorioPeach)
             .fixedSize()
@@ -184,6 +186,7 @@ private struct ArchiveCard: View {
 }
 
 #Preview {
-    ArchiveView(viewModel: NotesViewModel())
+    ArchiveView()
+        .environmentObject(makePreviewViewModel())
         .preferredColorScheme(.dark)
 }

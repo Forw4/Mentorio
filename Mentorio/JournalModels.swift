@@ -13,6 +13,8 @@ enum RealityCheckResult: String, Codable {
     case hardWork = "Пришлось попотеть"
 }
 
+// NoteStatus is defined in Note.swift; reuse that definition to avoid redeclaration.
+
 @Model
 final class AnalyticsEventRecord: Identifiable {
     var id: UUID
@@ -161,11 +163,20 @@ final class BraindumpNote: Identifiable {
     var selectedChoice: String? = nil
     var finalAction: String? = nil
     var completionProof: String? = nil
+    @Attribute(.externalStorage) var photoData: Data? = nil
     var realityCheck: RealityCheckResult? = nil
     var completedAt: Date? = nil
     var storedInsight: String? = nil
     var storedHighlight: String? = nil
     var storedAction: String? = nil
+    // Draft / session persistence
+    var chatHistoryData: Data? = nil
+    var pendingQuestion: String? = nil
+    var pendingChoicesJSON: String? = nil
+    var pendingTopicsJSON: String? = nil
+    var status: NoteStatus = NoteStatus.draft
+    var contextSummary: String? = nil
+    var isFastTrack: Bool = false
     
     init(
         id: UUID = UUID(),
@@ -187,16 +198,30 @@ final class BraindumpNote: Identifiable {
         selectedChoice: String? = nil,
         finalAction: String? = nil,
         completionProof: String? = nil,
+        photoData: Data? = nil,
         realityCheck: RealityCheckResult? = nil,
         completedAt: Date? = nil,
         storedInsight: String? = nil,
         storedHighlight: String? = nil,
-        storedAction: String? = nil
+        storedAction: String? = nil,
+        chatHistoryData: Data? = nil,
+        pendingQuestion: String? = nil,
+        pendingChoicesJSON: String? = nil,
+        pendingTopicsJSON: String? = nil,
+        status: NoteStatus = NoteStatus.draft,
+        contextSummary: String? = nil,
+        isFastTrack: Bool = false
     ) {
         self.id = id
         self.text = text
         self.createdAt = createdAt
-        self.state = state
+        // Initialize stateJSON directly to avoid computed property setter before full init
+        if let encoded = try? JSONEncoder().encode(state),
+           let json = String(data: encoded, encoding: .utf8) {
+            self.stateJSON = json
+        } else {
+            self.stateJSON = "{}"
+        }
         self.selectedTopic = selectedTopic
         self.userAnswer = userAnswer
         self.selectedChoiceIndex = selectedChoiceIndex
@@ -210,13 +235,22 @@ final class BraindumpNote: Identifiable {
         self.userClarification = userClarification
         self.insight = insight
         self.selectedChoice = selectedChoice
+        self.selectedChoice = selectedChoice
         self.finalAction = finalAction
         self.completionProof = completionProof
+        self.photoData = photoData
         self.realityCheck = realityCheck
         self.completedAt = completedAt
         self.storedInsight = storedInsight
         self.storedHighlight = storedHighlight
         self.storedAction = storedAction
+        self.chatHistoryData = chatHistoryData
+        self.pendingQuestion = pendingQuestion
+        self.pendingChoicesJSON = pendingChoicesJSON
+        self.pendingTopicsJSON = pendingTopicsJSON
+        self.status = status
+        self.contextSummary = contextSummary
+        self.isFastTrack = isFastTrack
     }
 }
 

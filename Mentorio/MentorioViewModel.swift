@@ -39,12 +39,26 @@ class MentorioViewModel: ObservableObject {
         AnalyticsManager.shared.configure(modelContext: self.modelContext)
         loadNotes()
     }
-    
-    // Computed property for active notes
-    var activeNotes: [BraindumpNote] {
-        notes.filter { !$0.isCompleted && !$0.isInTrash }
+
+    // Simple Codable chat turn used for serializing chat history for drafts
+    private struct ChatTurn: Codable {
+        let isAI: Bool
+        let text: String
     }
 
+    // Encode chat history to Data
+    func encodeChatHistory(_ turns: [(isAI: Bool, text: String)]) -> Data? {
+        let ct = turns.map { ChatTurn(isAI: $0.isAI, text: $0.text) }
+        return try? JSONEncoder().encode(ct)
+    }
+
+    // Decode Data -> chat turns
+    func decodeChatHistory(_ data: Data?) -> [(isAI: Bool, text: String)] {
+        guard let data = data,
+              let ct = try? JSONDecoder().decode([ChatTurn].self, from: data) else { return [] }
+        return ct.map { (isAI: $0.isAI, text: $0.text) }
+    }
+    
     // MARK: - Note Management
 
     private func fetchNote(by id: UUID) -> BraindumpNote? {
@@ -56,8 +70,9 @@ class MentorioViewModel: ObservableObject {
         return try? modelContext.fetch(descriptor).first
     }
     
-    func addNote(_ text: String, source: String = "main_input") {
+    func addNote(_ text: String, source: String = "main_input", status: NoteStatus = .active) {
         let newNote = BraindumpNote(text: text)
+        newNote.status = status
         modelContext.insert(newNote)  // Insert into SwiftData
         notes.insert(newNote, at: 0)
         selectedNoteId = newNote.id
@@ -140,6 +155,13 @@ class MentorioViewModel: ObservableObject {
         note.realityCheck = nil
         note.completedAt = nil
         note.isCompleted = false
+        // Clear draft session state so a restored note starts a fresh dialog
+        note.pendingQuestion = nil
+        note.pendingChoicesJSON = nil
+        note.pendingTopicsJSON = nil
+        note.chatHistoryData = nil
+        note.isFastTrack = false
+        note.contextSummary = nil
         saveContextSilently()
 
         note.deletedAt = Date()
@@ -161,6 +183,17 @@ class MentorioViewModel: ObservableObject {
         guard let note = deletedNotes.first(where: { $0.id == id }) ?? fetchNote(by: id) else { return }
         note.deletedAt = nil
         note.isInTrash = false
+        // Clear draft session fields: restored note should start a fresh dialog,
+        // not replay a stale pending state from before it was deleted.
+        note.pendingQuestion = nil
+        note.pendingChoicesJSON = nil
+        note.pendingTopicsJSON = nil
+        note.chatHistoryData = nil
+        note.isFastTrack = false
+        note.contextSummary = nil
+        note.state = .idle
+        note.selectedTopic = nil
+        note.clarifyingAttempts = 0
 
         persistAndReload(userFacingError: "Не удалось восстановить заметку")
     }
@@ -189,7 +222,6 @@ class MentorioViewModel: ObservableObject {
         note.isCompleted = true
         saveContextSilently()
         note.realityCheck = realityCheck
-        note.completionProof = nil
         
         // CRITICAL: Extract ALL data EXPLICITLY from current state BEFORE archiving
         // This ensures integrity per spec: "Hall of Legends - Сохраняется вся история"
@@ -197,20 +229,14 @@ class MentorioViewModel: ObservableObject {
         // Extract insight and choices from hasTactics state if available
         if case .hasTactics(let choices, let highlight, let insight, _) = note.state {
             note.insight = insight
-            // Also capture highlight for snapshot rule compliance
-            if highlight.isEmpty == false {
-                // Store as metadata if needed
+            // #10: capture highlight for archive snapshot (was an empty TODO before)
+            if !highlight.isEmpty {
+                note.storedHighlight = highlight
             }
             // Extract selected choice if index is set
             if let index = note.selectedChoiceIndex, index < choices.count {
                 note.selectedChoice = choices[index]
             }
-        }
-        
-        // Extract user clarification/answer (consolidate for archive)
-        // "Snapshot Rule": capture exact text from workflow
-        if note.userAnswer != nil && !note.userAnswer!.isEmpty {
-            note.userClarification = note.userAnswer
         }
         
         // Extract final action from executing state if available
@@ -265,7 +291,9 @@ class MentorioViewModel: ObservableObject {
                     for: mutableNote.text,
                     selectedTopic: mutableNote.selectedTopic,
                     userAnswer: mutableNote.userAnswer,
-                    clarifyingAttempts: mutableNote.clarifyingAttempts
+                    clarifyingAttempts: mutableNote.clarifyingAttempts,
+                    isFastTrack: mutableNote.isFastTrack,
+                    contextSummary: mutableNote.contextSummary
                 )
                 
                 loadFocusResponse(noteId: mutableNote.id, response: response)
@@ -388,32 +416,51 @@ class MentorioViewModel: ObservableObject {
         guard let note = notes.first(where: { $0.id == noteId }) else { return }
         note.selectedTopic = topic
         updateNote(note)
-        startTransformation(for: note)
+        
+        Task {
+            await updateNoteSummary(noteId: noteId)
+            startTransformation(for: note)
+        }
     }
     
     func submitAnswer(_ answer: String, for noteId: UUID) {
         guard let note = notes.first(where: { $0.id == noteId }) else { return }
         note.userAnswer = answer
         note.clarifyingAttempts += 1  // SPEC: "Счётчик инкрементируется при каждом submitAnswer()"
+        
+        // Fast-track check
+        let fastTrackKeywords: Set<String> = ["да", "ок", "окей", "ok", "погнали", "го", "давай", "согласен", "ага", "угу", "хорошо"]
+        let cleanAnswer = answer.lowercased().trimmingCharacters(in: .punctuationCharacters.union(.whitespaces))
+        let isFastTrack = fastTrackKeywords.contains(cleanAnswer) || cleanAnswer.count <= 3
+        note.isFastTrack = isFastTrack
+        
         trackProductEvent("clarification_submitted", note: note)
         updateNote(note)
-        startTransformation(for: note)
+        
+        Task {
+            let forceChoices = note.clarifyingAttempts >= 2 || isFastTrack
+            if forceChoices {
+                await updateNoteSummary(noteId: noteId)
+            }
+            startTransformation(for: note)
+        }
     }
     
     func selectChoice(_ choiceIndex: Int, for noteId: UUID) {
         guard let note = notes.first(where: { $0.id == noteId }) else { return }
         note.selectedChoiceIndex = choiceIndex
         updateNote(note)
-        
-        // Extract choice text and trigger final action
-        if case .hasTactics(let choices, let highlight, let insight, _) = note.state {
-            guard choiceIndex < choices.count else { return }
-            let selectedChoice = choices[choiceIndex]
-            trackProductEvent("choice_selected", note: note, props: [
+
+        // IMPORTANT: We do NOT call triggerFinalAction here.
+        // One Action generation requires explicit user confirmation via
+        // EntryOverlayView.acceptAction() → promoteDraftToActive().
+        // NoteCardView uses onRequestOpenEntry callback to open EntryOverlayView
+        // where the user completes the flow properly.
+        if case .hasTactics(let choices, _, _, _) = note.state, choiceIndex < choices.count {
+            trackProductEvent("choice_tapped_from_card", note: note, props: [
                 "choice_index": "\(choiceIndex)",
-                "choice_text": selectedChoice
+                "choice_text": choices[choiceIndex]
             ])
-            triggerFinalAction(for: note, choice: selectedChoice, highlight: highlight, insight: insight)
         }
     }
     
@@ -428,7 +475,11 @@ class MentorioViewModel: ObservableObject {
         let mutableNote = note
         mutableNote.state = .analyzing
         updateNote(mutableNote)
-        executingNoteId = note.id
+        // NOTE: We do NOT set executingNoteId here.
+        // executingNoteId is only set AFTER promoteDraftToActive() is called
+        // from EntryOverlayView.acceptAction(), i.e. when the user explicitly
+        // taps the "Accept" button. Setting it here would immediately show the
+        // OneActionOverlay even though the user never confirmed anything.
 
         trackProductEvent("one_action_requested", note: note, props: [
             "choice_text": choice
@@ -456,6 +507,19 @@ class MentorioViewModel: ObservableObject {
     @MainActor
     private func setExecutingAction(noteId: UUID, action: String) {
         guard let note = notes.first(where: { $0.id == noteId }) else { return }
+        // IMPORTANT: Only transition to .executing if this note has already been
+        // promoted to .active. If status is still .draft, the user hasn't confirmed
+        // the action yet — just store the generated text in a temp field so the
+        // overlay can display it, but do NOT set state = .executing.
+        // The actual promotion to .active + .executing happens in acceptAction()
+        // inside EntryOverlayView when the user explicitly taps "Принять".
+        guard note.status == .active else {
+            // Silently store the action text so EntryOverlayView can display it,
+            // but keep the note in .hasTactics state as a draft.
+            // Do NOT persist storedAction here — acceptAction() owns that write.
+            print("ℹ️ setExecutingAction: note is still draft, skipping .executing transition")
+            return
+        }
         note.storedAction = action
         note.state = .executing(action: action)
         trackProductEvent("one_action_generated", note: note)
@@ -474,6 +538,9 @@ class MentorioViewModel: ObservableObject {
     func presentStoredActionIfAvailable(for noteId: UUID) {
         guard let note = notes.first(where: { $0.id == noteId }) else { return }
         guard !note.isInTrash, !note.isCompleted else { return }
+        // Only present the stored action if the note has been promoted to .active.
+        // Draft notes with storedAction must NOT be forced into .executing.
+        guard note.status == .active else { return }
         guard let action = note.storedAction,
               !action.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
@@ -514,8 +581,10 @@ class MentorioViewModel: ObservableObject {
             "skip_reason": "keep_in_focus"
         ])
 
-        // Reset to idle, prepare for next iteration
+        // Reset to idle. status → .draft so the note leaves the Active bar
+        // and re-appears in Drafts. Without this it stayed .active indefinitely.
         note.state = .idle
+        note.status = .draft
         note.selectedTopic = nil
         note.userAnswer = nil
         note.selectedChoiceIndex = nil
@@ -523,11 +592,18 @@ class MentorioViewModel: ObservableObject {
         note.lastIntentRoute = nil
         note.lastIsHighStakes = false
         note.lastIntentUpdatedAt = nil
+        note.pendingQuestion = nil
+        note.pendingChoicesJSON = nil
+        note.pendingTopicsJSON = nil
+        note.chatHistoryData = nil
+        note.storedAction = nil
+        note.isFastTrack = false
         updateNote(note)
+        saveContextSilently()
         executingNoteId = nil
         focusedNoteID = nil
     }
-    
+
     // MARK: - Helpers
 
     private func trackProductEvent(_ name: String, note: BraindumpNote? = nil, props: [String: String] = [:]) {
@@ -568,14 +644,19 @@ class MentorioViewModel: ObservableObject {
     @MainActor
     private func setError(_ message: String) {
         errorMessage = message
-        // Auto-clear after 4 seconds
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+        // Auto-clear after 4 seconds using structured concurrency (#14)
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(4))
             if self.errorMessage == message {
                 self.errorMessage = nil
             }
         }
     }
     
+    // NOTE (#3): BraindumpNote is a @Model final class — a reference type.
+    // Assigning notes[index] = note does NOT copy data; it assigns the same object reference.
+    // The real effect is triggering @Published objectWillChange on the ViewModel so SwiftUI
+    // re-renders. Actual persistence still requires saveContextSilently() / persistAndReload().
     private func updateNote(_ note: BraindumpNote) {
         if let index = notes.firstIndex(where: { $0.id == note.id }) {
             notes[index] = note
@@ -627,6 +708,56 @@ class MentorioViewModel: ObservableObject {
         }
     }
 
+    // Persist draft session fields into the note model
+    @MainActor
+    func saveDraftSession(
+        noteId: UUID,
+        chatHistory: [(isAI: Bool, text: String)]?,
+        pendingQuestion: String?,
+        pendingChoices: [String]?,
+        pendingTopics: [String]?
+    ) {
+        guard let note = notes.first(where: { $0.id == noteId }) ?? fetchNote(by: noteId) else { return }
+
+        if let turns = chatHistory, let data = encodeChatHistory(turns) {
+            note.chatHistoryData = data
+        }
+
+        note.pendingQuestion = pendingQuestion
+
+        if let choices = pendingChoices, let cdata = try? JSONEncoder().encode(choices) {
+            note.pendingChoicesJSON = String(data: cdata, encoding: .utf8)
+        } else {
+            note.pendingChoicesJSON = nil
+        }
+
+        if let topics = pendingTopics, let tdata = try? JSONEncoder().encode(topics) {
+            note.pendingTopicsJSON = String(data: tdata, encoding: .utf8)
+        } else {
+            note.pendingTopicsJSON = nil
+        }
+
+        if note.status != .active {
+            note.status = .draft
+        }
+
+        // Silent save: BraindumpNote is a reference type, so in-memory state
+        // is already correct. A full persistAndReload (fetch + rebuild arrays)
+        // is unnecessary here — we're just persisting field changes mid-session.
+        saveContextSilently()
+    }
+
+    @MainActor
+    func promoteDraftToActive(noteId: UUID) {
+        guard let note = notes.first(where: { $0.id == noteId }) ?? fetchNote(by: noteId) else { return }
+        note.status = .active
+        note.pendingQuestion = nil
+        note.pendingChoicesJSON = nil
+        note.pendingTopicsJSON = nil
+        note.chatHistoryData = nil
+        persistAndReload(userFacingError: "Не удалось обновить заметку")
+    }
+
     private func saveContextSilently() {
         try? modelContext.save()
     }
@@ -638,6 +769,31 @@ class MentorioViewModel: ObservableObject {
         } catch {
             print("❌ Persistence failed: \(error)")
             setError(userFacingError)
+        }
+    }
+
+    // MARK: - Context Summary
+
+    func updateNoteSummary(noteId: UUID) async {
+        guard let note = notes.first(where: { $0.id == noteId }) ?? fetchNote(by: noteId) else { return }
+        
+        let braindump = note.text
+        let chatHistory = decodeChatHistory(note.chatHistoryData).map {
+            ChatRequest.ChatMessage(role: $0.isAI ? "assistant" : "user", content: $0.text)
+        }
+        
+        do {
+            let summary = try await MentorioAIService.summarizeContext(
+                braindump: braindump,
+                history: chatHistory
+            )
+            
+            await MainActor.run {
+                note.contextSummary = summary
+                saveContextSilently()
+            }
+        } catch {
+            print("❌ Failed to summarize context: \(error)")
         }
     }
 

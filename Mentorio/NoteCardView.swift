@@ -60,6 +60,10 @@ struct NoteCardView: View {
     let viewModel: MentorioViewModel
     let focusedNoteID: UUID?
     let onAnswerFieldFocus: ((UUID) -> Void)?
+    /// Called when user taps a tactic/choice. Caller should open EntryOverlayView
+    /// with this note so the user completes the flow through the proper
+    /// acceptAction() → promoteDraftToActive() path.
+    var onRequestOpenEntry: ((BraindumpNote) -> Void)? = nil
     @State private var answerInput: String = ""
     @FocusState private var isAnswerFieldFocused: Bool
     
@@ -306,9 +310,11 @@ struct NoteCardView: View {
                     VStack(spacing: 8) {
                         ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
                             Button(action: {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                    viewModel.selectChoice(index, for: note.id)
-                                }
+                                // Open EntryOverlayView — the proper flow that ends in
+                                // acceptAction() / promoteDraftToActive().
+                                // Do NOT call viewModel.selectChoice here directly;
+                                // that path was removed in Sprint 2 (#2).
+                                onRequestOpenEntry?(note)
                             }) {
                                 HStack(spacing: 10) {
                                     Text(choice)

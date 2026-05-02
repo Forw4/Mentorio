@@ -1,12 +1,34 @@
 import SwiftUI
+import UserNotifications
+import UIKit
 
 struct FocusDashboardView: View {
-    @ObservedObject var viewModel: NotesViewModel
+    @ObservedObject var viewModel: MentorioViewModel
     @Binding var selectedTab: AppTab
 
     @State private var isShowingEntry = false
     @State private var isShowingWinState = false
     @State private var completedNoteID: UUID?
+    @State private var selectedDraftNote: BraindumpNote? = nil
+    @State private var showVictoryDeleteAlert = false
+    @State private var showSettings = false
+
+    private var activeNote: BraindumpNote? {
+        // Only show a note as "active" if it has been explicitly promoted
+        // to .active status via acceptAction(). Draft notes must never appear here.
+        if let execId = viewModel.executingNoteId,
+           let note = viewModel.notes.first(where: { $0.id == execId }),
+           note.status == .active {
+            return note
+        }
+        // Fallback: first .active note in the list (not draft)
+        return viewModel.notes.first(where: { $0.status == .active && !$0.isCompleted && !$0.isInTrash })
+    }
+
+    private var draftNotes: [BraindumpNote] {
+        guard let activeID = activeNote?.id else { return viewModel.notes }
+        return viewModel.notes.filter { $0.id != activeID }
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -14,16 +36,28 @@ struct FocusDashboardView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Mentorio")
-                        .font(.largeTitle.bold())
-                        .fontDesign(.serif)
-                        .foregroundStyle(.white)
-                        .padding(.top, 8)
+                    HStack(alignment: .center) {
+                        Text("Mentorio")
+                            .font(.largeTitle.bold())
+                            .fontDesign(.serif)
+                            .foregroundStyle(.white)
 
-                    if let active = viewModel.activeNote {
-                        ActiveStickyBar(noteText: active.text) {
-                            guard let archived = viewModel.completeCurrentActiveNote() else { return }
-                            completedNoteID = archived.id
+                        Spacer()
+
+                        Button {
+                            showSettings = true
+                        } label: {
+                            Image(systemName: "gearshape")
+                                .font(.system(size: 19, weight: .medium))
+                        }
+                        .buttonStyle(GearButtonStyle())
+                    }
+                    .padding(.top, 8)
+
+                    if let active = activeNote {
+                        ActiveStickyBar(noteText: active.finalAction ?? active.storedAction ?? active.text) {
+                            viewModel.archiveNote(id: active.id)
+                            completedNoteID = active.id
                             withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
                                 isShowingWinState = true
                             }
@@ -36,7 +70,7 @@ struct FocusDashboardView: View {
                         .foregroundStyle(.white.opacity(0.76))
                         .padding(.top, 6)
 
-                    if viewModel.drafts.isEmpty {
+                    if draftNotes.isEmpty {
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
                             .fill(MentorioTheme.card)
                             .overlay(
@@ -47,8 +81,22 @@ struct FocusDashboardView: View {
                             .frame(height: 92)
                     } else {
                         LazyVStack(spacing: 12) {
-                            ForEach(viewModel.drafts) { note in
+                            ForEach(draftNotes) { note in
                                 DraftCard(text: note.text)
+                                    .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    .onTapGesture {
+                                        selectedDraftNote = note
+                                        withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
+                                            isShowingEntry = true
+                                        }
+                                    }
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                        Button(role: .destructive) {
+                                            handleDelete(note)
+                                        } label: {
+                                            Label("Удалить", systemImage: "trash")
+                                        }
+                                    }
                             }
                         }
                     }
@@ -58,6 +106,7 @@ struct FocusDashboardView: View {
             }
 
             Button {
+                selectedDraftNote = nil
                 withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
                     isShowingEntry = true
                 }
@@ -73,8 +122,10 @@ struct FocusDashboardView: View {
             .padding(.bottom, 10)
             .safeAreaPadding(.bottom, 8)
         }
-        .fullScreenCover(isPresented: $isShowingEntry) {
-            EntryOverlayView(viewModel: viewModel, isPresented: $isShowingEntry)
+        .fullScreenCover(isPresented: $isShowingEntry, onDismiss: {
+            selectedDraftNote = nil
+        }) {
+            EntryOverlayView(viewModel: viewModel, isPresented: $isShowingEntry, existingNote: selectedDraftNote)
         }
         .fullScreenCover(isPresented: $isShowingWinState) {
             if let completedNoteID {
@@ -88,7 +139,22 @@ struct FocusDashboardView: View {
                 )
             }
         }
-        .animation(.easeInOut(duration: 0.24), value: viewModel.activeNote?.id)
+        .animation(.easeInOut(duration: 0.24), value: viewModel.notes.first?.id)
+        .alert("Победы нельзя удалить. Это часть твоей истории.", isPresented: $showVictoryDeleteAlert) {
+            Button("OK", role: .cancel) {}
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+                .environmentObject(viewModel)
+        }
+    }
+
+    private func handleDelete(_ note: BraindumpNote) {
+        if note.isCompleted {
+            showVictoryDeleteAlert = true
+            return
+        }
+        viewModel.deleteNote(id: note.id)
     }
 }
 
@@ -152,6 +218,9 @@ private struct HoldToCompleteButton: View {
         .contentShape(Circle())
         .onLongPressGesture(minimumDuration: 3.0, maximumDistance: 44, pressing: { pressing in
             if pressing {
+                let generator = UIImpactFeedbackGenerator(style: .medium)
+                generator.prepare()
+                generator.impactOccurred()
                 didFinish = false
                 progress = 0
                 withAnimation(.linear(duration: 3.0)) {
@@ -163,6 +232,9 @@ private struct HoldToCompleteButton: View {
                 }
             }
         }, perform: {
+            let generator = UIImpactFeedbackGenerator(style: .heavy)
+            generator.prepare()
+            generator.impactOccurred()
             didFinish = true
             progress = 1
             onComplete()
@@ -196,7 +268,20 @@ private struct DraftCard: View {
     }
 }
 
+private struct GearButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Image(systemName: "gearshape")
+            .font(.system(size: 19, weight: .medium))
+            .foregroundStyle(configuration.isPressed ? MentorioTheme.accent : Color.white.opacity(0.7))
+            .frame(width: 44, height: 44)
+            .background(Color.white.opacity(0.07))
+            .clipShape(Circle())
+            .scaleEffect(configuration.isPressed ? 0.9 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
+    }
+}
+
 #Preview {
-    FocusDashboardView(viewModel: NotesViewModel(), selectedTab: .constant(.focus))
+    FocusDashboardView(viewModel: makePreviewViewModel(), selectedTab: .constant(.focus))
         .preferredColorScheme(.dark)
 }
