@@ -17,12 +17,12 @@ struct WinStateView: View {
 
                 Text("STEP DONE")
                     .font(.system(size: 44, weight: .black, design: .serif))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(MentorioTheme.primaryText)
 
                 if let note = (viewModel.notes + viewModel.archivedNotes).first(where: { $0.id == noteID }) {
                     Text(note.finalAction ?? note.storedAction ?? note.text)
                         .font(.headline)
-                        .foregroundStyle(.white.opacity(0.84))
+                        .foregroundStyle(MentorioTheme.secondaryText)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 28)
                 }
@@ -62,10 +62,10 @@ struct WinStateView: View {
                     onToArchive()
                 }
                 .font(.headline)
-                .foregroundStyle(.white)
+                .foregroundStyle(MentorioTheme.primaryText)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
-                .background(Color.white.opacity(0.1))
+                .background(MentorioTheme.card)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .padding(.horizontal, 24)
 

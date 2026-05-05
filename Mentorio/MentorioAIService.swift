@@ -16,29 +16,66 @@ struct FocusResponse: Codable {
 	let choices: [String]?
 }
 
-// MARK: - OpenRouter Request/Response Models
+// MARK: - Continuation Context
+
+// StepIntensity kept for source compatibility but no longer used in prompts
+enum StepIntensity {
+    case micro
+    case normal
+}
+
+struct ContinuationContext {
+    let pastAction: String
+    let pastNote: String?
+    let contextSummary: String?
+    // intensity kept for backwards compat but ignored in logic
+    let intensity: StepIntensity
+
+    init(pastAction: String, pastNote: String? = nil, contextSummary: String? = nil, intensity: StepIntensity = .normal) {
+        self.pastAction = pastAction
+        self.pastNote = pastNote
+        self.contextSummary = contextSummary
+        self.intensity = intensity
+    }
+}
+
+// MARK: - Legacy ChatRequest (kept for public signatures)
 
 struct ChatRequest: Encodable {
-    let model: String
-    let messages: [ChatMessage]
-    let max_tokens: Int   // ← новое поле
-
     struct ChatMessage: Encodable {
         let role: String
         let content: String
     }
 }
 
-struct ChatResponse: Decodable {
-	let choices: [ChatChoice]
+// MARK: - Config & OpenAI Models
 
-	struct ChatChoice: Decodable {
-		let message: ChatMessageResponse
+struct AIConfig {
+    let baseURL: URL
+    let apiKey: String
+    let model: String
+}
 
-		struct ChatMessageResponse: Decodable {
-			let content: String
-		}
-	}
+private struct OpenAIChatRequest: Encodable {
+    struct Message: Encodable {
+        let role: String
+        let content: String
+    }
+
+    let model: String
+    let messages: [Message]
+    let max_tokens: Int?
+}
+
+private struct OpenAIChatResponse: Decodable {
+    struct Choice: Decodable {
+        struct Message: Decodable {
+            let role: String?
+            let content: String?
+        }
+        let message: Message?
+    }
+    let choices: [Choice]?
 }
 
 // MARK: - AI Service
@@ -74,21 +111,32 @@ enum MentorioAIService {
 		[text, selectedTopic ?? "", userAnswer ?? ""].joined(separator: "|")
 	}
 
-	private static func apiKey() throws -> String {
-		let customKey = UserDefaults.standard.string(forKey: "customOpenRouterKey") ?? ""
-		if !customKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-			return customKey.trimmingCharacters(in: .whitespacesAndNewlines)
-		}
+    private static func currentConfig() throws -> AIConfig {
+        let customBase = UserDefaults.standard.string(forKey: "customAIBaseURL")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let customKey = UserDefaults.standard.string(forKey: "customAIKey")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let customModel = UserDefaults.standard.string(forKey: "customAIModel")?.trimmingCharacters(in: .whitespacesAndNewlines)
 
-		guard let key = Bundle.main.infoDictionary?["OPENROUTER_API_KEY"] as? String,
-			  !key.isEmpty else {
-			throw MentorioAIError.missingAPIKey
-		}
-		return key
-	}
+        if let base = customBase, !base.isEmpty,
+           let key = customKey, !key.isEmpty,
+           let model = customModel, !model.isEmpty,
+           let url = URL(string: base) {
+            return AIConfig(baseURL: url, apiKey: key, model: model)
+        }
 
-	private static let endpoint = "https://openrouter.ai/api/v1/chat/completions"
-    private static let model = "anthropic/claude-haiku-4.5"
+        // Default OpenRouter config
+        let rawKey = Bundle.main.infoDictionary?["OPENROUTER_API_KEY"] as? String ?? ""
+        let defaultKey = rawKey.trimmingCharacters(in: CharacterSet(charactersIn: " \"'\n\t\r"))
+        
+        guard !defaultKey.isEmpty else {
+            throw MentorioAIError.missingAPIKey
+        }
+        
+        guard let url = URL(string: "https://openrouter.ai/api") else {
+            throw MentorioAIError.invalidURL
+        }
+        
+        return AIConfig(baseURL: url, apiKey: defaultKey, model: "openrouter/auto")
+    }
 
 	// MARK: - Public API (Signatures preserved)
 
@@ -141,7 +189,8 @@ enum MentorioAIService {
 		userAnswer: String? = nil,
 		clarifyingAttempts: Int = 0,
         isFastTrack: Bool = false,
-        contextSummary: String? = nil
+        contextSummary: String? = nil,
+        continuation: ContinuationContext? = nil
 	) async throws -> FocusResponse {
         // Stage A (analyzeIntent) removed in Sprint 3 (#6).
         // It was a second API call used only to pass intent.rawValue into the prompt.
@@ -152,7 +201,8 @@ enum MentorioAIService {
 			userAnswer: userAnswer,
 			clarifyingAttempts: clarifyingAttempts,
             isFastTrack: isFastTrack,
-            contextSummary: contextSummary
+            contextSummary: contextSummary,
+            continuation: continuation
 		)
 
 		let raw = try await requestChatCompletion(prompt: prompt)
@@ -292,8 +342,8 @@ enum MentorioAIService {
 		userAnswer: String?,
 		clarifyingAttempts: Int,
         isFastTrack: Bool,
-        contextSummary: String?
-        // analysis: IntentAnalysis removed — Stage A was removed in Sprint 3 (#6)
+        contextSummary: String?,
+        continuation: ContinuationContext? = nil
 	) -> String {
 		return """
         OUTPUT ONLY VALID JSON. ZERO CONVERSATIONAL TEXT. NO MARKDOWN.
@@ -341,6 +391,20 @@ enum MentorioAIService {
         — Is Fast-Track: \(isFastTrack)
         — Context Summary: \(contextSummary ?? "[Нет резюме, используй исходный текст]")
         
+        \(continuation != nil ? """
+        КОНТЕКСТ ПРОДОЛЖЕНИЯ — ПОЛЬЗОВАТЕЛЬ СДЕЛАЛ ШАГ И ХОЧЕТ СЛЕДУЮЩИЙ:
+        — Выполненное действие: \(continuation!.pastAction)
+        — Заметка пользователя: \(continuation!.pastNote ?? "нет")
+        — Резюме ситуации: \(continuation!.contextSummary ?? contextSummary ?? "нет")
+
+        ФОРМАТ ОТВЕТА ДЛЯ ПРОДОЛЖЕНИЯ:
+        Верни JSON с полем "choices": null и полем "question": null.
+        Верни только "highlight" = констатация факта победы (1 предложение, без похвалы: "Шаг сделан: <pastAction>."),
+        "insight" = краткий вывод о контексте (1 предложение),
+        а в поле "choices" — одно конкретное следующее физическое действие на 10–15 минут с артефактом во внешнем мире.
+        Всё в духе Mentorio: жёстко, без воды, без эмодзи, без метафор.
+        """ : "")
+        
         ИСХОДНЫЕ ДАННЫЕ ЮЗЕРА:
         Брайндамп:
         \(text)
@@ -350,35 +414,8 @@ enum MentorioAIService {
         """
 	}
 
-	// MARK: - Networking (same as old)
+    // MARK: - Networking
 
-	private static func postToOpenRouter(requestBody: Data) async throws -> Data {
-		guard let url = URL(string: endpoint) else {
-			throw MentorioAIError.invalidURL
-		}
-
-		var request = URLRequest(url: url)
-		request.httpMethod = "POST"
-		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-		request.setValue("Bearer \(try apiKey())", forHTTPHeaderField: "Authorization")
-		request.setValue("https://mentorio.app", forHTTPHeaderField: "HTTP-Referer")
-		request.setValue("Mentorio", forHTTPHeaderField: "X-Title")
-		request.httpBody = requestBody
-
-		let (data, response) = try await URLSession.shared.data(for: request)
-		let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-
-		guard 200..<300 ~= statusCode else {
-			let errorBody = String(data: data, encoding: .utf8) ?? "Нет данных"
-			print("🚨 ОШИБКА API OpenRouter (Код \(statusCode)): \(errorBody)")
-			throw MentorioAIError.invalidResponse
-		}
-
-		return data
-	}
-
-    // MARK: - Sliding Window Context Helper
-    
     private static let systemPersona = "Ты — Mentorio, жесткий, но заботливый ментор по поведенческой активации. Отвечай максимально кратко, без вежливости и вводных фраз. Не пиши 'привет', 'конечно' и 'давай разберемся'. Твой лимит — 3 предложения. Сразу переходи к сути ответа."
 
     static func buildMessages(
@@ -388,23 +425,53 @@ enum MentorioAIService {
     ) -> [ChatRequest.ChatMessage] {
         var messages: [ChatRequest.ChatMessage] = []
         
-        // 1. Системный промпт (всегда первый)
-        messages.append(ChatRequest.ChatMessage(role: "system", content: systemPersona))
-        
-        // 1.5. Резюме контекста (если есть)
-        if let summary = summary, !summary.isEmpty {
-            messages.append(ChatRequest.ChatMessage(role: "system", content: "Контекст ситуации: \(summary)"))
-        }
-        
-        // 2. Скользящее окно (последние 4 реплики из истории)
+        // Скользящее окно (последние 4 реплики из истории)
         let windowSize = 4
         let recentHistory = history.suffix(windowSize)
         messages.append(contentsOf: recentHistory)
         
-        // 3. Текущий запрос пользователя
+        // Текущий запрос пользователя
         messages.append(ChatRequest.ChatMessage(role: "user", content: currentPrompt))
         
         return messages
+    }
+
+    private static func postChat(request: OpenAIChatRequest, config: AIConfig) async throws -> String {
+        let url = config.baseURL.appendingPathComponent("/v1/chat/completions")
+
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        
+        let requestData = try JSONEncoder().encode(request)
+        urlRequest.httpBody = requestData
+
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+
+        let rawResponseString = String(data: data, encoding: .utf8) ?? "Unable to decode raw response as UTF-8 string."
+        print("--- [RAW RESPONSE FROM MODEL] ---")
+        print("HTTP Status: \(statusCode)")
+        print("Body: \(rawResponseString)")
+        print("---------------------------------")
+
+        guard 200..<300 ~= statusCode else {
+            print("🚨 ОШИБКА API (Код \(statusCode)): \(rawResponseString)")
+            throw MentorioAIError.invalidResponse
+        }
+
+        do {
+            let decoded = try JSONDecoder().decode(OpenAIChatResponse.self, from: data)
+            guard let text = decoded.choices?.first?.message?.content, !text.isEmpty else {
+                throw MentorioAIError.emptyResponse
+            }
+            return text
+        } catch {
+            print("🚨 ОШИБКА ДЕКОДИРОВАНИЯ JSON: \(String(describing: error))")
+            print("Сырой ответ сервера: \(rawResponseString)")
+            throw MentorioAIError.invalidJSONResponse
+        }
     }
 
     private static func requestChatCompletion(
@@ -412,23 +479,30 @@ enum MentorioAIService {
         history: [ChatRequest.ChatMessage] = [],
         summary: String? = nil
     ) async throws -> String {
-        let messages = buildMessages(currentPrompt: prompt, history: history, summary: summary)
+        let config = try currentConfig()
+        let legacyMessages = buildMessages(currentPrompt: prompt, history: history, summary: summary)
+        
+        var messages: [OpenAIChatRequest.Message] = []
+        
+        var sysText = systemPersona
+        if let summary = summary, !summary.isEmpty {
+            sysText += "\nКонтекст ситуации: \(summary)"
+        }
+        
+        messages.append(OpenAIChatRequest.Message(role: "system", content: sysText))
+        
+        for msg in legacyMessages {
+            let role = (msg.role == "assistant" || msg.role == "model") ? "assistant" : "user"
+            messages.append(OpenAIChatRequest.Message(role: role, content: msg.content))
+        }
 
-        let body = ChatRequest(
-            model: model,
+        let request = OpenAIChatRequest(
+            model: config.model,
             messages: messages,
-            max_tokens: 400    // лимит токенов для ответа
+            max_tokens: 400
         )
 
-        let requestData = try JSONEncoder().encode(body)
-        let responseData = try await postToOpenRouter(requestBody: requestData)
-
-        let decoded = try JSONDecoder().decode(ChatResponse.self, from: responseData)
-        guard let text = decoded.choices.first?.message.content,
-              !text.isEmpty else {
-            throw MentorioAIError.emptyResponse
-        }
-        return text
+        return try await postChat(request: request, config: config)
     }
 
 	// MARK: - Sanitizers (basic only)
@@ -562,7 +636,7 @@ extension MentorioAIError: LocalizedError {
 		case .invalidURL:
 			return "Неверный адрес AI-сервиса"
 		case .missingAPIKey:
-			return "Не найден OPENROUTER_API_KEY. Проверь настройки приложения"
+			return "Не найден OPENROUTER_API_KEY или локальный ключ. Проверь настройки приложения"
 		case .invalidResponse:
 			return "AI-сервис вернул некорректный ответ"
 		case .emptyResponse:

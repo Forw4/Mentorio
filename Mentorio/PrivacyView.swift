@@ -6,12 +6,9 @@
 import SwiftUI
 
 struct PrivacyView: View {
-    private let bg         = Color(red: 0.051, green: 0.051, blue: 0.051)
-    private let textPrimary = Color.white.opacity(0.9)
-
     var body: some View {
         ZStack {
-            bg.ignoresSafeArea()
+            MentorioTheme.background.ignoresSafeArea()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -39,36 +36,35 @@ struct PrivacyView: View {
         }
         .navigationTitle("Приватность")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(bg, for: .navigationBar)
+        .toolbarBackground(MentorioTheme.background, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
     }
 
     private func privacyBlock(icon: String, title: String, body: String) -> some View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: icon)
                 .font(.system(size: 22, weight: .medium))
-                .foregroundStyle(Color(red: 1.0, green: 0.671, blue: 0.569))
+                .foregroundStyle(MentorioTheme.accent)
                 .frame(width: 32)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
                     .font(.headline.weight(.semibold))
-                    .foregroundStyle(textPrimary)
+                    .foregroundStyle(MentorioTheme.primaryText)
 
                 Text(body)
                     .font(.subheadline)
-                    .foregroundStyle(Color.white.opacity(0.6))
+                    .foregroundStyle(MentorioTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.white.opacity(0.05))
+                .fill(MentorioTheme.card)
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        .stroke(MentorioTheme.stroke, lineWidth: 1)
                 )
         )
     }

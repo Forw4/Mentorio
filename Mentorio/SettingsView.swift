@@ -12,20 +12,20 @@ struct SettingsView: View {
     @AppStorage("userName") var userName: String = ""
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome: Bool = false
     @AppStorage("customOpenRouterKey") private var customOpenRouterKey: String = ""
+    @AppStorage("customAIBaseURL") private var customAIBaseURL: String = ""
+    @AppStorage("customAIKey") private var customAIKey: String = ""
+    @AppStorage("customAIModel") private var customAIModel: String = ""
+    @AppStorage("isContinuationEnabled") private var isContinuationEnabled: Bool = false
     @FocusState private var nameFieldFocused: Bool
 
+    @AppStorage("appTheme") private var appTheme: AppTheme = .system
     @State private var notifStatus: UNAuthorizationStatus = .notDetermined
-
-    private let bg      = Color(red: 0.051, green: 0.051, blue: 0.051)
-    private let cardFill  = Color.white.opacity(0.05)
-    private let cardStroke = Color.white.opacity(0.08)
-    private let textPrimary = Color.white.opacity(0.9)
-    private let accent  = Color(red: 1.0, green: 0.671, blue: 0.569)
+    @State private var showResetConfirm = false
 
     var body: some View {
         NavigationStack {
             ZStack {
-                bg.ignoresSafeArea()
+                MentorioTheme.background.ignoresSafeArea()
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
@@ -33,14 +33,14 @@ struct SettingsView: View {
                             Text("Настройки")
                                 .font(.largeTitle.bold())
                                 .fontDesign(.serif)
-                                .foregroundStyle(textPrimary)
+                                .foregroundStyle(MentorioTheme.primaryText)
                             Spacer()
                             Button {
                                 dismiss()
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .font(.system(size: 26))
-                                    .foregroundStyle(Color.white.opacity(0.2))
+                                    .foregroundStyle(MentorioTheme.secondaryText.opacity(0.5))
                             }
                             .buttonStyle(.plain)
                         }
@@ -48,8 +48,10 @@ struct SettingsView: View {
                         .padding(.bottom, 6)
 
                         profileSection
+                        appearanceSection
                         notificationsSection
                         apiSection
+                        customAISection
                         dataSection
                         debugSection
                     }
@@ -75,17 +77,33 @@ struct SettingsView: View {
                 .textInputAutocapitalization(.words)
                 .disableAutocorrection(false)
                 .font(.body)
-                .foregroundStyle(textPrimary)
+                .foregroundStyle(MentorioTheme.primaryText)
                 .padding(12)
                 .background(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.06))
+                        .fill(MentorioTheme.card)
                         .overlay(
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(cardStroke, lineWidth: 1)
+                                .stroke(MentorioTheme.stroke, lineWidth: 1)
                         )
                 )
                 .focused($nameFieldFocused)
+        }
+    }
+
+    // MARK: - Appearance
+
+    private var appearanceSection: some View {
+        settingsCard {
+            sectionLabel("Оформление")
+
+            Picker("Тема", selection: $appTheme) {
+                ForEach(AppTheme.allCases) { theme in
+                    Text(theme.rawValue).tag(theme)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.vertical, 4)
         }
     }
 
@@ -97,16 +115,16 @@ struct SettingsView: View {
 
             HStack(spacing: 12) {
                 Image(systemName: notifIconName)
-                    .foregroundStyle(notifStatus == .authorized ? accent : Color.white.opacity(0.45))
+                    .foregroundStyle(notifStatus == .authorized ? MentorioTheme.accent : MentorioTheme.secondaryText)
                     .frame(width: 24)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(notifStatusLabel)
                         .font(.body.weight(.medium))
-                        .foregroundStyle(textPrimary)
+                        .foregroundStyle(MentorioTheme.primaryText)
                     Text(notifStatusSubtitle)
                         .font(.caption)
-                        .foregroundStyle(Color.white.opacity(0.5))
+                        .foregroundStyle(MentorioTheme.secondaryText)
                 }
 
                 Spacer()
@@ -123,7 +141,7 @@ struct SettingsView: View {
                     .foregroundStyle(.black)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 7)
-                    .background(accent)
+                    .background(MentorioTheme.accent)
                     .clipShape(Capsule())
                 } else if notifStatus == .denied {
                     Button("Открыть настройки") {
@@ -132,7 +150,7 @@ struct SettingsView: View {
                         }
                     }
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(accent)
+                    .foregroundStyle(MentorioTheme.accent)
                 }
             }
             .padding(.vertical, 4)
@@ -147,19 +165,78 @@ struct SettingsView: View {
 
             Text("Оставь пустым, чтобы использовать встроенный ключ Mentorio.")
                 .font(.caption)
-                .foregroundStyle(Color.white.opacity(0.5))
+                .foregroundStyle(MentorioTheme.secondaryText)
                 .padding(.bottom, 4)
 
             SecureField("sk-or-v1-...", text: $customOpenRouterKey)
                 .font(.body)
-                .foregroundStyle(textPrimary)
+                .foregroundStyle(MentorioTheme.primaryText)
                 .padding(12)
                 .background(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.06))
+                        .fill(MentorioTheme.card)
                         .overlay(
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(cardStroke, lineWidth: 1)
+                                .stroke(MentorioTheme.stroke, lineWidth: 1)
+                        )
+                )
+        }
+    }
+
+    // MARK: - Custom AI
+
+    private var customAISection: some View {
+        settingsCard {
+            sectionLabel("Кастомный AI (Ollama и др.)")
+
+            Text("Опционально. Если все поля заполнены, Mentorio будет использовать этот сервер вместо OpenRouter.")
+                .font(.caption)
+                .foregroundStyle(MentorioTheme.secondaryText)
+                .padding(.bottom, 4)
+
+            TextField("Base URL, например http://localhost:11434", text: $customAIBaseURL)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+                .disableAutocorrection(true)
+                .font(.body)
+                .foregroundStyle(MentorioTheme.primaryText)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(MentorioTheme.card)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(MentorioTheme.stroke, lineWidth: 1)
+                        )
+                )
+
+            TextField("API key (для Ollama можно любое слово)", text: $customAIKey)
+                .textInputAutocapitalization(.never)
+                .disableAutocorrection(true)
+                .font(.body)
+                .foregroundStyle(MentorioTheme.primaryText)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(MentorioTheme.card)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(MentorioTheme.stroke, lineWidth: 1)
+                        )
+                )
+
+            TextField("Модель, например llama3.1", text: $customAIModel)
+                .textInputAutocapitalization(.never)
+                .disableAutocorrection(true)
+                .font(.body)
+                .foregroundStyle(MentorioTheme.primaryText)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(MentorioTheme.card)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(MentorioTheme.stroke, lineWidth: 1)
                         )
                 )
         }
@@ -187,11 +264,31 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Debug
-
     private var debugSection: some View {
         settingsCard {
             sectionLabel("Отладка")
+
+            Toggle(isOn: $isContinuationEnabled) {
+                HStack(spacing: 12) {
+                    Image(systemName: "flask")
+                        .foregroundStyle(MentorioTheme.accent)
+                        .frame(width: 24)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Эксперимент: ещё один шаг")
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(MentorioTheme.primaryText)
+                        Text("Экспериментальная кнопка продолжения задачи")
+                            .font(.caption)
+                            .foregroundStyle(MentorioTheme.secondaryText)
+                    }
+                }
+            }
+            .tint(MentorioTheme.accent)
+            .padding(.vertical, 6)
+
+            Divider()
+                .background(MentorioTheme.stroke)
 
             NavigationLink {
                 DiagnosticsView()
@@ -201,11 +298,35 @@ struct SettingsView: View {
             .buttonStyle(.plain)
 
             Button {
-                hasSeenWelcome = false
+                showResetConfirm = true
             } label: {
-                settingsRow(title: "Сбросить приветствие", systemImage: "arrow.counterclockwise")
+                HStack(spacing: 12) {
+                    Image(systemName: "trash.fill")
+                        .foregroundStyle(Color.red.opacity(0.8))
+                        .frame(width: 24)
+                    Text("Сбросить всё")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(Color.red.opacity(0.9))
+                    Spacer()
+                }
+                .padding(.vertical, 6)
             }
             .buttonStyle(.plain)
+        }
+        .alert("Сбросить всё?", isPresented: $showResetConfirm) {
+            Button("Удалить всё", role: .destructive) {
+                viewModel.deleteAllData()
+                hasSeenWelcome = false
+                customOpenRouterKey = ""
+                customAIBaseURL = ""
+                customAIKey = ""
+                customAIModel = ""
+                isContinuationEnabled = false
+                userName = ""
+            }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("Будут удалены все брейндампы, заметки и победы. Это действие нельзя отменить.")
         }
     }
 
@@ -218,10 +339,10 @@ struct SettingsView: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(cardFill)
+                .fill(MentorioTheme.card)
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(cardStroke, lineWidth: 1)
+                        .stroke(MentorioTheme.stroke, lineWidth: 1)
                 )
         )
     }
@@ -230,24 +351,24 @@ struct SettingsView: View {
         Text(title)
             .font(.headline.weight(.semibold))
             .fontDesign(.serif)
-            .foregroundStyle(textPrimary.opacity(0.8))
+            .foregroundStyle(MentorioTheme.secondaryText)
     }
 
     private func settingsRow(title: String, systemImage: String) -> some View {
         HStack(spacing: 12) {
             Image(systemName: systemImage)
-                .foregroundStyle(accent)
+                .foregroundStyle(MentorioTheme.accent)
                 .frame(width: 24)
 
             Text(title)
                 .font(.body.weight(.medium))
-                .foregroundStyle(textPrimary)
+                .foregroundStyle(MentorioTheme.primaryText)
 
             Spacer()
 
             Image(systemName: "chevron.right")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(Color.white.opacity(0.3))
+                .foregroundStyle(MentorioTheme.secondaryText)
         }
         .padding(.vertical, 6)
     }

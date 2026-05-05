@@ -10,14 +10,9 @@ struct RecentlyDeletedView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showVictoryDeleteAlert = false
 
-    private let background = Color(red: 0.051, green: 0.051, blue: 0.051)
-    private let cardFill = Color.white.opacity(0.05)
-    private let cardStroke = Color.white.opacity(0.08)
-    private let textPrimary = Color.white.opacity(0.9)
-
     var body: some View {
         ZStack {
-            background.ignoresSafeArea()
+            MentorioTheme.background.ignoresSafeArea()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -50,7 +45,7 @@ struct RecentlyDeletedView: View {
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(Color.mentorioPeach)
                     .frame(width: 32, height: 32)
-                    .background(Color.white.opacity(0.08))
+                    .background(MentorioTheme.card)
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
@@ -58,7 +53,7 @@ struct RecentlyDeletedView: View {
             Text("Недавно удаленные")
                 .font(.title2.weight(.semibold))
                 .fontDesign(.serif)
-                .foregroundStyle(textPrimary)
+                .foregroundStyle(MentorioTheme.primaryText)
 
             Spacer()
         }
@@ -69,19 +64,19 @@ struct RecentlyDeletedView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Корзина пуста")
                 .font(.headline.weight(.semibold))
-                .foregroundStyle(textPrimary)
+                .foregroundStyle(MentorioTheme.primaryText)
 
             Text("Удаленные черновики появятся здесь.")
                 .font(.subheadline)
-                .foregroundStyle(Color.white.opacity(0.6))
+                .foregroundStyle(MentorioTheme.secondaryText)
         }
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(cardFill)
+                .fill(MentorioTheme.card)
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(cardStroke, lineWidth: 1)
+                        .stroke(MentorioTheme.stroke, lineWidth: 1)
                 )
         )
     }
@@ -90,13 +85,13 @@ struct RecentlyDeletedView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(note.text)
                 .font(.body)
-                .foregroundStyle(textPrimary)
+                .foregroundStyle(MentorioTheme.primaryText)
                 .lineLimit(3)
 
             if let deletedAt = note.deletedAt {
                 Text(deletedAt.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption)
-                    .foregroundStyle(Color.white.opacity(0.55))
+                    .foregroundStyle(MentorioTheme.secondaryText)
             }
 
             HStack(spacing: 10) {
@@ -122,14 +117,14 @@ struct RecentlyDeletedView: View {
                 } label: {
                     Text("Удалить навсегда")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(MentorioTheme.primaryText)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
-                        .background(Color.white.opacity(0.08))
+                        .background(MentorioTheme.card)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                                .stroke(MentorioTheme.stroke, lineWidth: 1)
                         )
                 }
                 .buttonStyle(.plain)
@@ -138,10 +133,10 @@ struct RecentlyDeletedView: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(cardFill)
+                .fill(MentorioTheme.card)
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(cardStroke, lineWidth: 1)
+                        .stroke(MentorioTheme.stroke, lineWidth: 1)
                 )
         )
     }

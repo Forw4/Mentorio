@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct MentorioApp: App {
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome: Bool = false
+    @AppStorage("appTheme") private var appTheme: AppTheme = .system
 
     var body: some Scene {
         WindowGroup {
@@ -13,7 +14,8 @@ struct MentorioApp: App {
                     RootView()
                 }
             }
-            .preferredColorScheme(.dark)
+            .preferredColorScheme(appTheme.colorScheme)
+            .animation(.easeInOut(duration: 0.3), value: appTheme)
             .background(MentorioTheme.background.ignoresSafeArea())
             .tint(MentorioTheme.accent)
         }
@@ -33,11 +35,11 @@ private struct WelcomeGateView: View {
                 Text("Mentorio")
                     .font(.largeTitle.bold())
                     .fontDesign(.serif)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(MentorioTheme.primaryText)
 
                 Text("Minimal tool for action over procrastination.")
                     .font(.body)
-                    .foregroundStyle(.white.opacity(0.78))
+                    .foregroundStyle(MentorioTheme.secondaryText)
 
                 Button {
                     withAnimation(.easeInOut(duration: 0.25)) {

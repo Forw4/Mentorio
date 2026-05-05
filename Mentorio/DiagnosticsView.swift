@@ -474,7 +474,10 @@ struct DiagnosticsView: View {
                 continue
             }
 
-            viewModel.addNote(scenario.prompt, source: "diagnostics_seed")
+            let note = viewModel.addNote(scenario.prompt, source: "diagnostics_seed")
+            if let data = viewModel.encodeChatHistory([(isAI: false, text: scenario.prompt)]) {
+                note.chatHistoryData = data
+            }
             existing.insert(normalizedPrompt)
             added += 1
         }

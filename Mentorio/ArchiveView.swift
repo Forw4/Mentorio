@@ -19,7 +19,7 @@ struct ArchiveView: View {
                         Text("Essential Space")
                             .font(.largeTitle.bold())
                             .fontDesign(.serif)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(MentorioTheme.primaryText)
 
                         if viewModel.archivedNotes.isEmpty {
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -28,7 +28,7 @@ struct ArchiveView: View {
                                 .overlay(
                                     Text("No completed actions yet")
                                         .font(.subheadline)
-                                        .foregroundStyle(.white.opacity(0.68))
+                                        .foregroundStyle(MentorioTheme.secondaryText)
                                 )
                         } else {
                             LazyVGrid(columns: columns, spacing: 12) {

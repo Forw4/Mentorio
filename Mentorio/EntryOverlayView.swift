@@ -4,6 +4,19 @@ struct EntryOverlayView: View {
     @ObservedObject var viewModel: MentorioViewModel
     @Binding var isPresented: Bool
     private let existingNote: BraindumpNote?
+    private let continuationContext: ContinuationContext?
+
+    init(
+        viewModel: MentorioViewModel,
+        isPresented: Binding<Bool>,
+        existingNote: BraindumpNote? = nil,
+        continuationContext: ContinuationContext? = nil
+    ) {
+        self.viewModel = viewModel
+        self._isPresented = isPresented
+        self.existingNote = existingNote
+        self.continuationContext = continuationContext
+    }
 
     @State private var entryState: EntryState = .braindump
     @State private var inputText = ""
@@ -67,15 +80,7 @@ struct EntryOverlayView: View {
 
     @State private var chatHistory: [ChatMessage] = []
 
-    init(
-        viewModel: MentorioViewModel,
-        isPresented: Binding<Bool>,
-        existingNote: BraindumpNote? = nil
-    ) {
-        self.viewModel = viewModel
-        self._isPresented = isPresented
-        self.existingNote = existingNote
-    }
+
 
     var body: some View {
         if #available(iOS 16.4, *) {
@@ -86,22 +91,27 @@ struct EntryOverlayView: View {
     }
 
     private var content: some View {
-        ZStack {
-            backgroundLayer
-
-            VStack {
-                Spacer(minLength: 80)
-                dialogCard
-                    .frame(maxWidth: 520)
-            }
-            .padding(.horizontal, 18)
-            .padding(.bottom, 18)
+        VStack {
+            Spacer(minLength: 0)
+            dialogCard
+                .frame(maxWidth: 520)
         }
+        .padding(.horizontal, 18)
+        .padding(.bottom, 18)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            backgroundLayer
+                .onTapGesture {
+                    focusedField = nil
+                }
+        )
         .onAppear {
             if !didLoadExisting {
                 didLoadExisting = true
                 if let existingNote {
                     hydrateFromExisting(existingNote)
+                } else if let ctx = continuationContext {
+                    startContinuation(ctx)
                 }
             }
             updateFocusForState()
@@ -178,8 +188,12 @@ struct EntryOverlayView: View {
                     .padding(.bottom, 10)
                     .id("BottomSpacer")
                 }
-                .frame(height: 320)
+                // Instead of a strict 320, we allow it to shrink if the keyboard pushes it on small screens
+                .frame(minHeight: 150, maxHeight: 320)
                 .scrollIndicators(.hidden)
+                .onTapGesture {
+                    focusedField = nil
+                }
                 .onChange(of: chatHistory.count) {
                     withAnimation { proxy.scrollTo("BottomSpacer", anchor: .bottom) }
                 }
@@ -212,7 +226,7 @@ struct EntryOverlayView: View {
                 Text(titleText)
                     .font(.title3.weight(.semibold))
                     .fontDesign(.serif)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(MentorioTheme.primaryText)
             }
 
             Spacer()
@@ -222,9 +236,10 @@ struct EntryOverlayView: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.8))
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(MentorioTheme.primaryText.opacity(0.8))
                     .frame(width: 30, height: 30)
-                    .background(Color.white.opacity(0.08))
+                    .background(MentorioTheme.stroke)
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
@@ -285,27 +300,32 @@ struct EntryOverlayView: View {
         submitLabel: String,
         action: @escaping () -> Void
     ) -> some View {
-        VStack(spacing: 10) {
+        let isTextEmpty = text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        
+        return HStack(alignment: .bottom, spacing: 8) {
             TextField(placeholder, text: text, axis: .vertical)
                 .lineLimit(lineLimit)
                 .textInputAutocapitalization(.sentences)
                 .disableAutocorrection(false)
-                .foregroundStyle(.white)
-                .padding(12)
-                .background(inputFieldBackground)
+                .foregroundStyle(MentorioTheme.primaryText)
                 .focused($focusedField, equals: focus)
+                .padding(.vertical, 10)
+                .padding(.leading, 14)
 
             Button(action: action) {
-                Text(submitLabel)
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(.black)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(MentorioTheme.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(isTextEmpty ? MentorioTheme.primaryText.opacity(0.3) : .black)
+                    .frame(width: 32, height: 32)
+                    .background(isTextEmpty ? MentorioTheme.primaryText.opacity(0.1) : MentorioTheme.accent)
+                    .clipShape(Circle())
             }
             .buttonStyle(.plain)
+            .disabled(isTextEmpty)
+            .padding(.trailing, 6)
+            .padding(.bottom, 6)
         }
+        .background(inputFieldBackground)
     }
 
     private func optionList(kind: ClarificationKind, options: [String]) -> some View {
@@ -337,7 +357,7 @@ struct EntryOverlayView: View {
 
     private var inputFieldBackground: some View {
         RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(Color.white.opacity(0.08))
+            .fill(MentorioTheme.card)
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(MentorioTheme.stroke, lineWidth: 1)
@@ -356,7 +376,7 @@ struct EntryOverlayView: View {
 
         switch role {
         case .mentor:
-            fill = Color.white.opacity(0.08)
+            fill = MentorioTheme.card
             stroke = MentorioTheme.stroke
         case .user:
             fill = Color.mentorioPeach.opacity(0.22)
@@ -373,7 +393,7 @@ struct EntryOverlayView: View {
 
             Text(text)
                 .font(emphasis ? .title3.weight(.semibold) : .body)
-                .foregroundStyle(.white)
+                .foregroundStyle(MentorioTheme.primaryText)
                 .padding(.vertical, 10)
                 .padding(.horizontal, 12)
                 .background(
@@ -534,6 +554,24 @@ struct EntryOverlayView: View {
         }
     }
 
+    private func startContinuation(_ ctx: ContinuationContext) {
+        let firstMsg = "Шаг сделан: \(ctx.pastAction). Формирую следующий."
+
+        let simulatedBraindump = "[Продолжение задачи: \(ctx.pastAction)]"
+        ensureDraft(for: simulatedBraindump)
+        braindumpText = simulatedBraindump
+
+        appendChat(isAI: true, text: firstMsg)
+
+        entryState = .analyzing
+        updateDraft { $0.state = .analyzing }
+
+        activeTask?.cancel()
+        activeTask = Task {
+            await runFocusAnalysis(contextText: simulatedBraindump, selectedTopic: nil, userAnswer: nil)
+        }
+    }
+
     private func submitBraindump() {
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -657,7 +695,8 @@ struct EntryOverlayView: View {
                 userAnswer: userAnswer,
                 clarifyingAttempts: clarifyingAttempts,
                 isFastTrack: isFastTrack,
-                contextSummary: contextSummary
+                contextSummary: contextSummary,
+                continuation: continuationContext
             )
 
             guard !Task.isCancelled else { return }

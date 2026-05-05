@@ -3,11 +3,15 @@ import PhotosUI
 import SwiftData
 
 struct ArchiveDetailView: View {
+    @EnvironmentObject var viewModel: MentorioViewModel
     @Bindable var note: BraindumpNote
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
     @State private var selectedPhotoData: Data? = nil
     @State private var currentReflectionInput: String = ""
     @Binding var selectedNoteID: UUID?
+    
+    @State private var isShowingContinuation = false
+    @AppStorage("isContinuationEnabled") private var isContinuationEnabled: Bool = false
 
     private var actionText: String {
         note.finalAction ?? note.storedAction ?? note.text
@@ -33,6 +37,7 @@ struct ArchiveDetailView: View {
                 headerSection
                 artifactSection
                 reflectionSection
+                continuationSection
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 24)
@@ -41,6 +46,22 @@ struct ArchiveDetailView: View {
         .background(Color.black.opacity(0.88).ignoresSafeArea())
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .fullScreenCover(isPresented: $isShowingContinuation, onDismiss: {
+            if viewModel.notes.contains(where: { !$0.isCompleted && $0.deletedAt == nil && !$0.isInTrash }) {
+                selectedNoteID = nil
+            }
+        }) {
+            EntryOverlayView(
+                viewModel: viewModel,
+                isPresented: $isShowingContinuation,
+                existingNote: nil,
+                continuationContext: ContinuationContext(
+                    pastAction: actionText,
+                    pastNote: currentReflectionInput.isEmpty ? nil : currentReflectionInput,
+                    contextSummary: note.contextSummary
+                )
+            )
+        }
     }
 
     private var headerBar: some View {
@@ -203,6 +224,25 @@ struct ArchiveDetailView: View {
         }
         .onChange(of: currentReflectionInput) { _, newValue in
             note.userClarification = newValue.isEmpty ? nil : newValue
+        }
+    }
+
+    @ViewBuilder
+    private var continuationSection: some View {
+        if isContinuationEnabled {
+            Button {
+                isShowingContinuation = true
+            } label: {
+                Text("Сделать ещё один шаг")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.black)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(MentorioTheme.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 16)
         }
     }
 

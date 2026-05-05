@@ -40,7 +40,7 @@ struct FocusDashboardView: View {
                         Text("Mentorio")
                             .font(.largeTitle.bold())
                             .fontDesign(.serif)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(MentorioTheme.primaryText)
 
                         Spacer()
 
@@ -171,7 +171,7 @@ private struct ActiveStickyBar: View {
 
                 Text(noteText)
                     .font(.headline.weight(.semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(MentorioTheme.primaryText)
                     .lineLimit(2)
             }
 
@@ -200,7 +200,7 @@ private struct HoldToCompleteButton: View {
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color.white.opacity(0.22), lineWidth: 4)
+                .stroke(MentorioTheme.primaryText.opacity(0.22), lineWidth: 4)
 
             Circle()
                 .trim(from: 0, to: progress)
@@ -212,7 +212,7 @@ private struct HoldToCompleteButton: View {
 
             Text("Hold")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(MentorioTheme.primaryText)
         }
         .frame(width: 68, height: 68)
         .contentShape(Circle())
@@ -252,12 +252,12 @@ private struct DraftCard: View {
     var body: some View {
         Text(text)
             .font(.body)
-            .foregroundStyle(.white.opacity(0.82))
+            .foregroundStyle(MentorioTheme.primaryText.opacity(0.82))
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.white.opacity(0.06))
+                    .fill(MentorioTheme.card)
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .stroke(MentorioTheme.stroke, lineWidth: 1)
@@ -272,9 +272,9 @@ private struct GearButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         Image(systemName: "gearshape")
             .font(.system(size: 19, weight: .medium))
-            .foregroundStyle(configuration.isPressed ? MentorioTheme.accent : Color.white.opacity(0.7))
+            .foregroundStyle(configuration.isPressed ? MentorioTheme.accent : MentorioTheme.secondaryText)
             .frame(width: 44, height: 44)
-            .background(Color.white.opacity(0.07))
+            .background(MentorioTheme.card)
             .clipShape(Circle())
             .scaleEffect(configuration.isPressed ? 0.9 : 1.0)
             .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)

@@ -70,7 +70,8 @@ class MentorioViewModel: ObservableObject {
         return try? modelContext.fetch(descriptor).first
     }
     
-    func addNote(_ text: String, source: String = "main_input", status: NoteStatus = .active) {
+    @discardableResult
+    func addNote(_ text: String, source: String = "main_input", status: NoteStatus = .active) -> BraindumpNote {
         let newNote = BraindumpNote(text: text)
         newNote.status = status
         modelContext.insert(newNote)  // Insert into SwiftData
@@ -84,6 +85,7 @@ class MentorioViewModel: ObservableObject {
             props: ["entry_point": source]
         )
         saveNotes()  // Persist immediately
+        return newNote
     }
 
     @discardableResult
@@ -131,7 +133,25 @@ class MentorioViewModel: ObservableObject {
             return 0
         }
     }
-    
+
+    func deleteAllData() {
+        let all = notes + archivedNotes + deletedNotes
+        for note in all {
+            modelContext.delete(note)
+        }
+        notes = []
+        archivedNotes = []
+        deletedNotes = []
+        selectedNoteId = nil
+        focusedNoteID = nil
+        executingNoteId = nil
+        do {
+            try modelContext.save()
+        } catch {
+            print("❌ Failed to delete all data: \(error)")
+        }
+    }
+
     func deleteNote(id: UUID) {
         guard let note = (notes + archivedNotes).first(where: { $0.id == id }) ?? fetchNote(by: id) else { return }
 
