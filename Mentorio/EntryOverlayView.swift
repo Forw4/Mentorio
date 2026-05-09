@@ -4,68 +4,36 @@ struct EntryOverlayView: View {
     @ObservedObject var viewModel: MentorioViewModel
     @Binding var isPresented: Bool
     private let existingNote: BraindumpNote?
-    private let continuationContext: ContinuationContext?
 
     init(
         viewModel: MentorioViewModel,
         isPresented: Binding<Bool>,
-        existingNote: BraindumpNote? = nil,
-        continuationContext: ContinuationContext? = nil
+        existingNote: BraindumpNote? = nil
     ) {
         self.viewModel = viewModel
         self._isPresented = isPresented
         self.existingNote = existingNote
-        self.continuationContext = continuationContext
     }
 
-    @State private var entryState: EntryState = .braindump
-    @State private var inputText = ""
-    @State private var answerText = ""
-    @State private var braindumpText = ""
-    @State private var analyzingMessage = "Собираю фокус..."
-    @State private var errorMessage: String? = nil
-    
-    @State private var selectedTopic: String? = nil
-    @State private var selectedChoice: String? = nil
-    @State private var highlight: String = ""
-    @State private var insight: String = ""
-    
-    // clarifyingAttempts is NOT kept as @State — the note model is the source of truth.
-    // Read from note in runFocusAnalysis; write via updateDraft in submitAnswer.
-
-    @State private var pendingDraftID: UUID? = nil
-    @State private var choiceOptions: [String] = []
-    @State private var activeTask: Task<Void, Never>? = nil
-    @State private var didLoadExisting = false
-
-    @FocusState private var focusedField: FocusField?
-
-    private enum FocusField {
-        case braindump
-        case clarification
-    }
-
-    private enum ClarificationKind: Equatable {
-        case question
-        case topic
-        case choice
-    }
+    // MARK: - State
 
     private enum EntryState: Equatable {
         case braindump
         case analyzing
-        case clarification(question: String, kind: ClarificationKind, options: [String])
-        case oneAction(action: String)
+        case mirror(highlight: String, action: String, emoji: String)
     }
 
-    /// Single source of truth for system navigation prompt strings (#13).
-    /// These appear in chat history, duplicate-detection, and context sanitization.
-    private enum DialogLabel {
-        static let pickTopic  = "Выбери фокус"
-        static let pickTactic = "Выбери тактику"
-        static let all: Set<String> = [pickTopic, pickTactic]
-    }
+    @State private var entryState: EntryState = .braindump
+    @State private var inputText = ""
+    @State private var braindumpText = ""
+    @State private var errorMessage: String? = nil
+    @State private var pendingDraftID: UUID? = nil
+    @State private var activeTask: Task<Void, Never>? = nil
+    @State private var didLoadExisting = false
 
+    @FocusState private var isInputFocused: Bool
+
+    // Chat history — simpler than before, just braindump + mentor responses
     private struct ChatMessage: Identifiable, Equatable {
         let id: UUID
         let isAI: Bool
@@ -80,7 +48,7 @@ struct EntryOverlayView: View {
 
     @State private var chatHistory: [ChatMessage] = []
 
-
+    // MARK: - Body
 
     var body: some View {
         if #available(iOS 16.4, *) {
@@ -102,7 +70,7 @@ struct EntryOverlayView: View {
         .background(
             backgroundLayer
                 .onTapGesture {
-                    focusedField = nil
+                    isInputFocused = false
                 }
         )
         .onAppear {
@@ -110,17 +78,19 @@ struct EntryOverlayView: View {
                 didLoadExisting = true
                 if let existingNote {
                     hydrateFromExisting(existingNote)
-                } else if let ctx = continuationContext {
-                    startContinuation(ctx)
                 }
             }
-            updateFocusForState()
+            if entryState == .braindump {
+                isInputFocused = true
+            }
         }
         .onDisappear {
             activeTask?.cancel()
         }
         .animation(.spring(response: 0.46, dampingFraction: 0.9), value: entryState)
     }
+
+    // MARK: - Background
 
     private var backgroundLayer: some View {
         ZStack {
@@ -149,6 +119,8 @@ struct EntryOverlayView: View {
         }
     }
 
+    // MARK: - Dialog Card
+
     private var dialogCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             headerRow
@@ -156,43 +128,63 @@ struct EntryOverlayView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        // 1. Приветствие или исходный текст пользователя
+                        // 1. Welcome or user braindump
                         if entryState == .braindump {
                             bubble(text: "Коротко. Что мешает прямо сейчас?", role: .mentor)
                         } else if !braindumpText.isEmpty {
                             bubble(text: braindumpText, role: .user)
                         }
 
-                        // 2. Единая история чата без дублей
+                        // 2. Chat history (previous attempts shown here)
                         ForEach(chatHistory) { message in
                             bubble(text: message.text, role: message.isAI ? .mentor : .user)
                         }
 
-                        // 3. Индикатор загрузки (когда ИИ думает)
+                        // 3. Loading indicator
                         if entryState == .analyzing {
-                            bubble(text: analyzingMessage, role: .mentor)
+                            bubble(text: "Сжимаю суть...", role: .mentor)
                         }
 
-                        // 4. Финальное действие (One Action)
-                        if case .oneAction(let action) = entryState {
-                            bubble(text: "Твое действие на сейчас:", role: .mentor)
-                            bubble(text: action, role: .mentor, emphasis: true)
+                        // 4. Mirror card (highlight + action + buttons)
+                        if case .mirror(let highlight, let action, let emoji) = entryState {
+                            mirrorCardBubble(highlight: highlight, action: action, emoji: emoji)
                         }
 
-                        // 5. Ошибки
+                        // 5. Error
                         if let errorMessage {
                             bubble(text: errorMessage, role: .error)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.bottom, 10)
+                    // Space at the top so the first message isn't blurred by the fade-out
+                    .padding(.top, 32)
                     .id("BottomSpacer")
                 }
-                // Instead of a strict 320, we allow it to shrink if the keyboard pushes it on small screens
-                .frame(minHeight: 150, maxHeight: 320)
+                .frame(maxHeight: 600)
                 .scrollIndicators(.hidden)
+                // Turn off default ScrollView clipping
+                .scrollClipDisabled()
+                // Apply a custom gradient mask:
+                // 1. Fades out smoothly at the top (0.0 to 0.08)
+                // 2. Extends infinitely horizontally (scale x: 10) so glow never clips
+                // 3. Extends infinitely downwards (padding bottom -1000) so messages scroll right to the edge
+                .mask(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0.0),
+                            .init(color: .black, location: 0.02),
+                            .init(color: .black, location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .scaleEffect(x: 10, y: 1.0, anchor: .center)
+                    .padding(.bottom, -1000)
+                )
+                // Shift the scroll area up slightly to reduce the gap below "Зеркало"
+                .padding(.top, -8)
                 .onTapGesture {
-                    focusedField = nil
+                    isInputFocused = false
                 }
                 .onChange(of: chatHistory.count) {
                     withAnimation { proxy.scrollTo("BottomSpacer", anchor: .bottom) }
@@ -213,8 +205,13 @@ struct EntryOverlayView: View {
                         .stroke(MentorioTheme.stroke, lineWidth: 1)
                 )
         )
+        // Clip everything to the exact shape of the gray bubble.
+        // This ensures messages can scroll all the way to the edge, but never outside.
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .shadow(color: Color.black.opacity(0.35), radius: 24, x: 0, y: 16)
     }
+
+    // MARK: - Header
 
     private var headerRow: some View {
         HStack(alignment: .top) {
@@ -236,7 +233,6 @@ struct EntryOverlayView: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 14, weight: .bold))
-                    .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(MentorioTheme.primaryText.opacity(0.8))
                     .frame(width: 30, height: 30)
                     .background(MentorioTheme.stroke)
@@ -246,73 +242,46 @@ struct EntryOverlayView: View {
         }
     }
 
-    private var controlsSection: some View {
-        VStack(spacing: 12) {
-            switch entryState {
-            case .braindump:
-                inputField(
-                    placeholder: "Хаос мыслей...",
-                    text: $inputText,
-                    focus: .braindump,
-                    lineLimit: 1...10,
-                    submitLabel: "Отправить",
-                    action: submitBraindump
-                )
-            case .analyzing:
-                ProgressView()
-                    .tint(MentorioTheme.accent)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-            case .clarification(_, let kind, let options):
-                if kind == .question {
-                    inputField(
-                        placeholder: "Короткий ответ.",
-                        text: $answerText,
-                        focus: .clarification,
-                        submitLabel: "Ответить",
-                        action: submitAnswer
-                    )
-                } else {
-                    optionList(kind: kind, options: options)
-                }
-            case .oneAction(let action):
-                Button {
-                    acceptAction(action)
-                } label: {
-                    Text("Сделать")
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.black)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(MentorioTheme.accent)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                }
-                .buttonStyle(.plain)
-            }
+    private var titleText: String {
+        switch entryState {
+        case .braindump: return "В чем затык?"
+        case .analyzing: return "Сжимаю суть"
+        case .mirror: return "Зеркало"
         }
     }
 
-    private func inputField(
-        placeholder: String,
-        text: Binding<String>,
-        focus: FocusField,
-        lineLimit: ClosedRange<Int> = 1...10,
-        submitLabel: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        let isTextEmpty = text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        
+    // MARK: - Controls
+
+    @ViewBuilder
+    private var controlsSection: some View {
+        switch entryState {
+        case .braindump:
+            braindumpInputField
+        case .analyzing:
+            ProgressView()
+                .tint(MentorioTheme.accent)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+        case .mirror:
+            // Buttons are inside the mirror card itself
+            EmptyView()
+        }
+    }
+
+    private var braindumpInputField: some View {
+        let isTextEmpty = inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
         return HStack(alignment: .bottom, spacing: 8) {
-            TextField(placeholder, text: text, axis: .vertical)
-                .lineLimit(lineLimit)
+            TextField("Хаос мыслей...", text: $inputText, axis: .vertical)
+                .lineLimit(1...15)
                 .textInputAutocapitalization(.sentences)
                 .disableAutocorrection(false)
                 .foregroundStyle(MentorioTheme.primaryText)
-                .focused($focusedField, equals: focus)
+                .focused($isInputFocused)
                 .padding(.vertical, 10)
                 .padding(.leading, 14)
 
-            Button(action: action) {
+            Button(action: submitBraindump) {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(isTextEmpty ? MentorioTheme.primaryText.opacity(0.3) : .black)
@@ -325,44 +294,192 @@ struct EntryOverlayView: View {
             .padding(.trailing, 6)
             .padding(.bottom, 6)
         }
-        .background(inputFieldBackground)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(MentorioTheme.card)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(MentorioTheme.stroke, lineWidth: 1)
+                )
+        )
     }
 
-    private func optionList(kind: ClarificationKind, options: [String]) -> some View {
-        VStack(spacing: 10) {
-            ForEach(options, id: \.self) { option in
-                Button {
-                    handleOption(option, kind: kind)
-                } label: {
-                    Text(option)
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .padding(.horizontal, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Color.white.opacity(0.08))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .stroke(MentorioTheme.accent.opacity(0.5), lineWidth: 1)
-                                )
+    // MARK: - Mirror Card Bubble (Animated)
+
+    private func mirrorCardBubble(highlight: String, action: String, emoji: String) -> some View {
+        MirrorCardView(
+            highlight: highlight,
+            action: action,
+            emoji: emoji,
+            onAccept: { acceptMirrorAction(action: action, highlight: highlight, emoji: emoji) },
+            onReject: { regenerateAction() }
+        )
+    }
+}
+
+// MARK: - Animated Mirror Card
+
+private struct MirrorCardView: View {
+    let highlight: String
+    let action: String
+    let emoji: String
+    let onAccept: () -> Void
+    let onReject: () -> Void
+
+    @State private var appeared: Bool = false
+    private let cr: CGFloat = 18
+
+    // Soft Mentorio palette for the glow
+    private let auraColors: [Color] = [
+        Color(red: 0.95, green: 0.50, blue: 0.35), // Mentorio Peach (based)
+        Color(red: 1.00, green: 0.63, blue: 0.67), // Rose Peach
+        Color(red: 1.00, green: 0.73, blue: 0.59), // Warm Cream
+        Color(red: 1.00, green: 0.63, blue: 0.67), // Rose Peach
+        Color(red: 0.95, green: 0.50, blue: 0.35)  // Loop back
+    ]
+
+    var body: some View {
+        TimelineView(.animation) { ctx in
+            let t = ctx.date.timeIntervalSinceReferenceDate
+            let a1 = Angle.degrees(t * 35)
+            let a2 = Angle.degrees(t * -25)
+
+            cardContent
+                // 1. Solid dark base
+                .background(
+                    RoundedRectangle(cornerRadius: cr, style: .continuous)
+                        // Slightly transparent blocker so the neon glow barely shines through
+                        .fill(Color.black.opacity(0.85))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: cr, style: .continuous)
+                                .fill(MentorioTheme.card)
                         )
-                }
-                .buttonStyle(.plain)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: cr, style: .continuous)
+                                .stroke(MentorioTheme.stroke, lineWidth: 1)
+                        )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: cr, style: .continuous))
+
+                // 2. WIDE SOFT AURA
+                .background(
+                    RoundedRectangle(cornerRadius: cr + 8, style: .continuous)
+                        .fill(
+                            AngularGradient(colors: auraColors, center: .center, angle: a1)
+                        )
+                        .padding(-8)
+                        .blur(radius: 16)
+                        .opacity(0.5)
+                )
+
+                // 3. INNER CORE AURA
+                .background(
+                    RoundedRectangle(cornerRadius: cr + 3, style: .continuous)
+                        .fill(
+                            AngularGradient(colors: auraColors, center: .center, angle: a2)
+                        )
+                        .padding(-3)
+                        .blur(radius: 8)
+                        .opacity(0.35)
+                )
+
+                // 4. Very subtle, crisp glass edge
+                .overlay(
+                    RoundedRectangle(cornerRadius: cr, style: .continuous)
+                        .stroke(
+                            AngularGradient(colors: auraColors.map { $0.opacity(0.6) }, center: .center, angle: a1),
+                            lineWidth: 0.5
+                        )
+                )
+        }
+        .padding(.top, 16)
+        // Entrance animation
+        .opacity(appeared ? 1 : 0)
+        .scaleEffect(appeared ? 1 : 0.95)
+        .offset(y: appeared ? 0 : 10)
+        .onAppear {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.82)) {
+                appeared = true
             }
         }
     }
 
-    private var inputFieldBackground: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(MentorioTheme.card)
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(MentorioTheme.stroke, lineWidth: 1)
-            )
+    private var cardContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("СУТЬ")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.white.opacity(0.45))
+                Text(highlight)
+                    .font(.body.weight(.medium))
+                    .fontDesign(.serif)
+                    .foregroundStyle(MentorioTheme.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 12)
+
+            Rectangle()
+                .fill(Color.white.opacity(0.06))
+                .frame(height: 0.5)
+                .padding(.horizontal, 16)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("ОДИН ШАГ")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(Color(red: 0.88, green: 0.70, blue: 0.58).opacity(0.8))
+                HStack(alignment: .top, spacing: 8) {
+                    Text(emoji)
+                        .font(.title2)
+                    Text(action)
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(MentorioTheme.primaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 16)
+
+            HStack(spacing: 10) {
+                Button(action: onAccept) {
+                    Text("Возьму этот шаг")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(MentorioTheme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
+
+                Button(action: onReject) {
+                    Text("Не то")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.5))
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 20)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.white.opacity(0.04))
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+        }
     }
+}
+
+// MARK: - Bubble, Actions, Helpers
+
+extension EntryOverlayView {
+
+    // MARK: - Bubble
 
     private enum BubbleRole {
         case mentor
@@ -370,7 +487,7 @@ struct EntryOverlayView: View {
         case error
     }
 
-    private func bubble(text: String, role: BubbleRole, emphasis: Bool = false) -> some View {
+    private func bubble(text: String, role: BubbleRole) -> some View {
         let fill: Color
         let stroke: Color
 
@@ -392,7 +509,7 @@ struct EntryOverlayView: View {
             }
 
             Text(text)
-                .font(emphasis ? .title3.weight(.semibold) : .body)
+                .font(.body)
                 .foregroundStyle(MentorioTheme.primaryText)
                 .padding(.vertical, 10)
                 .padding(.horizontal, 12)
@@ -411,166 +528,7 @@ struct EntryOverlayView: View {
         }
     }
 
-    private var titleText: String {
-        switch entryState {
-        case .braindump: return "В чем затык?"
-        case .analyzing: return "Даю фокус"
-        case .clarification: return "Уточняю"
-        case .oneAction: return "Одно действие"
-        }
-    }
-
-    private func updateFocusForState() {
-        switch entryState {
-        case .braindump:
-            focusedField = .braindump
-        case .clarification(_, let kind, _):
-            focusedField = kind == .question ? .clarification : nil
-        case .analyzing, .oneAction:
-            focusedField = nil
-        }
-    }
-
-    // Умное добавление без дубликатов
-    private func appendChat(isAI: Bool, text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        
-        // System navigation prompts ("Выбери фокус", "Выбери тактику") must never
-        // be added twice — check the ENTIRE history, not just the last message.
-        let isSystemPrompt = DialogLabel.all.contains(trimmed)
-        if isSystemPrompt, chatHistory.contains(where: { $0.isAI && $0.text == trimmed }) {
-            return
-        }
-        
-        // For regular messages, block only consecutive duplicates
-        if let last = chatHistory.last, last.isAI == isAI, last.text == trimmed {
-            return
-        }
-        chatHistory.append(ChatMessage(isAI: isAI, text: trimmed))
-    }
-
-    private func activeMentorQuestionText() -> String? {
-        if case .clarification(let question, _, _) = entryState {
-            return question
-        }
-        return nil
-    }
-
-    private func hydrateFromExisting(_ note: BraindumpNote) {
-        pendingDraftID = note.id
-        braindumpText = note.text
-        // inputText intentionally NOT set: it is the pre-submission TextField binding.
-        // When reopening an existing note the braindump was already submitted;
-        // braindumpText is the source of truth, inputText must stay empty.
-        chatHistory = viewModel.decodeChatHistory(note.chatHistoryData).map { ChatMessage(isAI: $0.isAI, text: $0.text) }
-        selectedTopic = note.selectedTopic
-        selectedChoice = note.selectedChoice
-        // clarifyingAttempts is now read from the note in runFocusAnalysis directly (#5)
-        highlight = note.storedHighlight ?? ""
-        insight = note.storedInsight ?? ""
-        answerText = note.userAnswer ?? ""
-        errorMessage = nil
-        choiceOptions = []
-        analyzingMessage = "Собираю фокус..."
-
-        // Only restore oneAction UI if the session is genuinely finalized:
-        // the note must be in .executing state OR status == .active.
-        // storedAction alone is not enough — it may be a temp value from a cancelled session.
-        let isFinalized: Bool
-        if case .executing = note.state {
-            isFinalized = true
-        } else {
-            isFinalized = note.status == .active
-        }
-        if isFinalized, let storedAction = note.storedAction,
-           !storedAction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            entryState = .oneAction(action: storedAction)
-            return
-        }
-
-        // If there is a pending session saved, prefer restoring its pending fields.
-        // Priority: choices > topics > plain question.
-        // Rationale: if pendingChoicesJSON is set, the user is already past topic selection
-        // regardless of what pendingTopicsJSON contains (it may be stale from a previous step).
-        if let pq = note.pendingQuestion, !pq.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if let pcj = note.pendingChoicesJSON,
-               let data = pcj.data(using: .utf8),
-               let pcs = try? JSONDecoder().decode([String].self, from: data),
-               !pcs.isEmpty {
-                // Choices take priority — user was at tactic selection
-                choiceOptions = pcs
-                entryState = .clarification(question: pq, kind: .choice, options: pcs)
-            } else if let ptj = note.pendingTopicsJSON,
-                      let data = ptj.data(using: .utf8),
-                      let pts = try? JSONDecoder().decode([String].self, from: data),
-                      !pts.isEmpty {
-                entryState = .clarification(question: pq, kind: .topic, options: pts)
-            } else {
-                entryState = .clarification(question: pq, kind: .question, options: [])
-            }
-            return
-        }
-        
-        if let pcj = note.pendingChoicesJSON, let data = pcj.data(using: .utf8), let pcs = try? JSONDecoder().decode([String].self, from: data), !pcs.isEmpty {
-            choiceOptions = pcs
-            entryState = .clarification(question: DialogLabel.pickTactic, kind: .choice, options: pcs)
-            return
-        }
-        
-        if let ptj = note.pendingTopicsJSON, let data = ptj.data(using: .utf8), let pts = try? JSONDecoder().decode([String].self, from: data), !pts.isEmpty {
-            entryState = .clarification(question: DialogLabel.pickTopic, kind: .topic, options: pts)
-            return
-        }
-
-        switch note.state {
-        case .idle:
-            entryState = .braindump
-        case .analyzing:
-            entryState = .analyzing
-        case .needsTopic(let topics):
-            let question = DialogLabel.pickTopic
-            appendChat(isAI: true, text: question)
-            entryState = .clarification(question: question, kind: .topic, options: topics)
-        case .clarifying(let question):
-            appendChat(isAI: true, text: question)
-            entryState = .clarification(question: question, kind: .question, options: [])
-        case .hasTactics(let choices, let stateHighlight, let stateInsight, _):
-            if highlight.isEmpty { highlight = stateHighlight }
-            if insight.isEmpty { insight = stateInsight }
-            choiceOptions = choices
-            let question = DialogLabel.pickTactic
-            appendChat(isAI: true, text: question)
-            entryState = .clarification(question: question, kind: .choice, options: choices)
-        case .executing(let action):
-            entryState = .oneAction(action: action)
-        }
-    }
-
-    private func closeOverlay() {
-        activeTask?.cancel()
-        withAnimation(.easeInOut(duration: 0.22)) {
-            isPresented = false
-        }
-    }
-
-    private func startContinuation(_ ctx: ContinuationContext) {
-        let firstMsg = "Шаг сделан: \(ctx.pastAction). Формирую следующий."
-
-        let simulatedBraindump = "[Продолжение задачи: \(ctx.pastAction)]"
-        ensureDraft(for: simulatedBraindump)
-        braindumpText = simulatedBraindump
-
-        appendChat(isAI: true, text: firstMsg)
-
-        entryState = .analyzing
-        updateDraft { $0.state = .analyzing }
-
-        activeTask?.cancel()
-        activeTask = Task {
-            await runFocusAnalysis(contextText: simulatedBraindump, selectedTopic: nil, userAnswer: nil)
-        }
-    }
+    // MARK: - Actions
 
     private func submitBraindump() {
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -579,298 +537,125 @@ struct EntryOverlayView: View {
         braindumpText = trimmed
         inputText = ""
         chatHistory = []
+        errorMessage = nil
+        isInputFocused = false
+
         ensureDraft(for: trimmed)
-        // clarifyingAttempts resets in the note via updateDraft below (not local state)
-        updateDraft { $0.clarifyingAttempts = 0 }
-        selectedTopic = nil
-        selectedChoice = nil
-        highlight = ""
-        insight = ""
-        choiceOptions = []
-        errorMessage = nil
-        
-        startFocusAnalysis(selectedTopic: nil, userAnswer: nil)
-    }
-
-    private func submitAnswer() {
-        let trimmed = answerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-
-        answerText = ""
-        errorMessage = nil
-        appendChat(isAI: false, text: trimmed)
-
-        updateDraft { note in
-            note.userAnswer = trimmed
-            note.clarifyingAttempts += 1  // note is the single source of truth
-        }
-        if let pending = pendingDraftID {
-            let currentQuestion = activeMentorQuestionText()
-            viewModel.saveDraftSession(
-                noteId: pending,
-                chatHistory: chatHistory.map { (isAI: $0.isAI, text: $0.text) },
-                pendingQuestion: currentQuestion,
-                pendingChoices: nil,
-                pendingTopics: nil
-            )
-        }
-        startFocusAnalysis(selectedTopic: selectedTopic, userAnswer: trimmed)
-    }
-
-    private func handleOption(_ option: String, kind: ClarificationKind) {
-        errorMessage = nil
-        appendChat(isAI: false, text: option)
-
-        switch kind {
-        case .topic:
-            selectedTopic = option
-            updateDraft { $0.selectedTopic = option }
-            if let pending = pendingDraftID {
-                let currentQuestion = activeMentorQuestionText()
-                viewModel.saveDraftSession(
-                    noteId: pending,
-                    chatHistory: chatHistory.map { (isAI: $0.isAI, text: $0.text) },
-                    pendingQuestion: currentQuestion,
-                    pendingChoices: nil,
-                    pendingTopics: nil
-                )
-            }
-            startFocusAnalysis(selectedTopic: option, userAnswer: nil)
-        case .choice:
-            selectedChoice = option
-            updateDraft { note in
-                note.selectedChoice = option
-                if let index = choiceOptions.firstIndex(of: option) {
-                    note.selectedChoiceIndex = index
-                }
-            }
-            if let pending = pendingDraftID {
-                let currentQuestion = activeMentorQuestionText()
-                viewModel.saveDraftSession(
-                    noteId: pending,
-                    chatHistory: chatHistory.map { (isAI: $0.isAI, text: $0.text) },
-                    pendingQuestion: currentQuestion,
-                    pendingChoices: choiceOptions,
-                    pendingTopics: nil
-                )
-            }
-            generateOneAction(choice: option)
-        case .question:
-            break
-        }
-    }
-
-    private func startFocusAnalysis(selectedTopic: String?, userAnswer: String?) {
-        analyzingMessage = "Собираю фокус..."
         entryState = .analyzing
-        updateDraft { $0.state = .analyzing }
-        let contextText = conversationContextText()
+
         activeTask?.cancel()
         activeTask = Task {
-            await runFocusAnalysis(contextText: contextText, selectedTopic: selectedTopic, userAnswer: userAnswer)
+            await runMirrorAnalysis(text: trimmed, retryHint: nil)
         }
     }
 
-    private func runFocusAnalysis(contextText: String, selectedTopic: String?, userAnswer: String?) async {
-        // Resolve current note fields — note is the single source of truth for
-        // clarifyingAttempts, isFastTrack, and contextSummary.
-        let clarifyingAttempts: Int
-        let isFastTrack: Bool
-        let contextSummary: String?
-        if let id = pendingDraftID,
-           let note = viewModel.notes.first(where: { $0.id == id }) {
-            clarifyingAttempts = note.clarifyingAttempts
-            isFastTrack = note.isFastTrack
-            contextSummary = note.contextSummary
-        } else {
-            clarifyingAttempts = 0
-            isFastTrack = false
-            contextSummary = nil
-        }
+    private func runMirrorAnalysis(text: String, retryHint: String?) async {
+        guard let noteId = pendingDraftID else { return }
 
         do {
-            let response = try await MentorioAIService.getCoreHighlightChoices(
-                for: contextText,
-                selectedTopic: selectedTopic,
-                userAnswer: userAnswer,
-                clarifyingAttempts: clarifyingAttempts,
-                isFastTrack: isFastTrack,
-                contextSummary: contextSummary,
-                continuation: continuationContext
+            let mirror = try await viewModel.analyzeBraindump(
+                noteId: noteId,
+                text: text,
+                retryHint: retryHint
             )
 
             guard !Task.isCancelled else { return }
 
             await MainActor.run {
-                applyFocusResponse(response)
+                entryState = .mirror(
+                    highlight: mirror.highlight,
+                    action: mirror.action,
+                    emoji: mirror.emoji
+                )
             }
         } catch {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 errorMessage = error.localizedDescription
                 entryState = .braindump
-                inputText = braindumpText
             }
         }
     }
 
-    private func applyFocusResponse(_ response: FocusResponse) {
-        if let h = response.highlight {
-            highlight = h
-            updateDraft { $0.storedHighlight = h }
-        }
-        if let i = response.insight {
-            insight = i
-            updateDraft { $0.storedInsight = i }
-        }
+    private func acceptMirrorAction(action: String, highlight: String, emoji: String) {
+        guard let noteId = pendingDraftID else { return }
 
-        // HARD INVARIANT: if user already selected a topic, NEVER show topic
-        // selection again regardless of what the AI returned.
-        // LLMs cannot reliably enforce prompt-level rules — Swift is the gatekeeper.
-        let topicsAllowed = selectedTopic == nil
-        if topicsAllowed, let topics = response.topics, !topics.isEmpty {
-            let question = DialogLabel.pickTopic
-            appendChat(isAI: true, text: question)
-            entryState = .clarification(question: question, kind: .topic, options: topics)
-            updateDraft { note in
-                note.state = .needsTopic(topics: topics)
-            }
-            if let pending = pendingDraftID {
-                viewModel.saveDraftSession(
-                    noteId: pending,
-                    chatHistory: chatHistory.map { (isAI: $0.isAI, text: $0.text) },
-                    pendingQuestion: question,
-                    pendingChoices: nil,
-                    pendingTopics: topics
-                )
-            }
-            updateFocusForState()
-            return
-        }
-
-        if let question = response.question, !question.isEmpty {
-            appendChat(isAI: true, text: question)
-            entryState = .clarification(question: question, kind: .question, options: [])
-            updateDraft { note in
-                note.state = .clarifying(question: question)
-            }
-            if let pending = pendingDraftID {
-                viewModel.saveDraftSession(
-                    noteId: pending,
-                    chatHistory: chatHistory.map { (isAI: $0.isAI, text: $0.text) },
-                    pendingQuestion: question,
-                    pendingChoices: nil,
-                    pendingTopics: nil
-                )
-            }
-            updateFocusForState()
-            return
-        }
-
-        if let choices = response.choices, !choices.isEmpty {
-            let question = DialogLabel.pickTactic
-            choiceOptions = choices
-            appendChat(isAI: true, text: question)
-            entryState = .clarification(question: question, kind: .choice, options: choices)
-            updateDraft { note in
-                note.state = .hasTactics(choices: choices, highlight: highlight, insight: insight, topics: response.topics)
-            }
-            if let pending = pendingDraftID {
-                viewModel.saveDraftSession(
-                    noteId: pending,
-                    chatHistory: chatHistory.map { (isAI: $0.isAI, text: $0.text) },
-                    pendingQuestion: question,
-                    pendingChoices: choices,
-                    pendingTopics: nil  // Always nil at choices stage — topics are stale and
-                                       // would cause hydrateFromExisting to show topic picker
-                )
-            }
-            updateFocusForState()
-            return
-        }
-
-        errorMessage = "AI-сервис вернул пустой ответ"
-        entryState = .braindump
-        updateFocusForState()
+        viewModel.acceptMirrorAction(
+            noteId: noteId,
+            action: action,
+            highlight: highlight,
+            emoji: emoji
+        )
+        closeOverlay()
     }
 
-    private func generateOneAction(choice: String) {
-        analyzingMessage = "Формирую действие..."
+    private func regenerateAction() {
+        guard case .mirror = entryState else { return }
+
+        // Clean chat: just show that we're rethinking, no dump of old response
+        chatHistory.append(ChatMessage(isAI: true, text: "Переформулирую."))
+
         entryState = .analyzing
-        updateDraft { $0.state = .analyzing }
-        let contextText = conversationContextText()
+        errorMessage = nil
+
         activeTask?.cancel()
         activeTask = Task {
-            await runOneAction(choice: choice, contextText: contextText)
-        }
-    }
-
-    private func runOneAction(choice: String, contextText: String) async {
-        do {
-            let action = try await MentorioAIService.getOneAction(
-                for: choice,
-                braindump: contextText,
-                highlight: highlight,
-                insight: insight,
-                selectedTopic: selectedTopic
+            await runMirrorAnalysis(
+                text: braindumpText,
+                retryHint: "Предыдущий вариант не подошёл пользователю. Дай ДРУГОЙ highlight и ДРУГОЕ действие."
             )
-
-            guard !Task.isCancelled else { return }
-
-            await MainActor.run {
-                entryState = .oneAction(action: action)
-                // Do NOT write storedAction to the note yet.
-                // storedAction/finalAction are only persisted in acceptAction(),
-                // which is the explicit user-triggered promotion to .active.
-                // Writing here would cause hydrateFromExisting to show OneAction UI
-                // on next open, even if the user never tapped "Accept".
-                updateDraft { note in
-                    note.state = .hasTactics(choices: choiceOptions, highlight: highlight, insight: insight, topics: nil)
-                }
-            }
-        } catch {
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                errorMessage = error.localizedDescription
-                entryState = .clarification(
-                    question: DialogLabel.pickTactic,
-                    kind: .choice,
-                    options: choiceOptions
-                )
-            }
         }
     }
 
-    private func acceptAction(_ action: String) {
-        let trimmedAction = action.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedAction.isEmpty else { return }
+    // MARK: - Hydration
 
-        if pendingDraftID == nil {
-            let baseText = braindumpText.trimmingCharacters(in: .whitespacesAndNewlines)
-            viewModel.addNote(baseText.isEmpty ? trimmedAction : baseText, source: "entry_overlay", status: .draft)
-            pendingDraftID = viewModel.selectedNoteId
-        }
+    private func hydrateFromExisting(_ note: BraindumpNote) {
+        pendingDraftID = note.id
+        braindumpText = note.text
+        errorMessage = nil
 
-        guard let pendingDraftID,
-              let note = viewModel.notes.first(where: { $0.id == pendingDraftID }) else {
+        // If note is already executing — close overlay, user should see ActiveBar
+        if case .executing = note.state {
+            closeOverlay()
             return
         }
 
-        if !highlight.isEmpty { note.storedHighlight = highlight }
-        if !insight.isEmpty { note.storedInsight = insight }
-        if let selectedTopic { note.selectedTopic = selectedTopic }
-        if let selectedChoice { note.selectedChoice = selectedChoice }
-
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
-            note.finalAction = trimmedAction
-            note.storedAction = trimmedAction
-            note.state = .executing(action: trimmedAction)
-            viewModel.executingNoteId = note.id
+        // If note has stored highlight + action (was in mirror state before closing),
+        // restore the mirror card
+        if let storedHighlight = note.storedHighlight,
+           let storedAction = note.storedAction,
+           !storedHighlight.isEmpty, !storedAction.isEmpty,
+           note.status != .active {
+            entryState = .mirror(
+                highlight: storedHighlight,
+                action: storedAction,
+                emoji: note.actionEmoji ?? "⚡"
+            )
+            return
         }
-        viewModel.saveNotes()
-        // Promote draft to active now that user accepted an action
-        viewModel.promoteDraftToActive(noteId: pendingDraftID)
-        closeOverlay()
+
+        // Otherwise start fresh — show braindump
+        entryState = .braindump
+    }
+
+    // MARK: - Helpers
+
+    private func closeOverlay() {
+        activeTask?.cancel()
+
+        // Save mirror state to note before closing — so draft can be restored
+        if case .mirror(let highlight, let action, let emoji) = entryState,
+           let noteId = pendingDraftID,
+           let note = viewModel.notes.first(where: { $0.id == noteId }) {
+            note.storedHighlight = highlight
+            note.storedAction = action
+            note.actionEmoji = emoji
+            viewModel.saveNotes()
+        }
+
+        withAnimation(.easeInOut(duration: 0.22)) {
+            isPresented = false
+        }
     }
 
     private func ensureDraft(for text: String) {
@@ -888,47 +673,14 @@ struct EntryOverlayView: View {
 
         viewModel.addNote(trimmed, source: "entry_overlay", status: .draft)
         pendingDraftID = viewModel.selectedNoteId
-        if let pending = pendingDraftID {
-            viewModel.saveDraftSession(
-                noteId: pending,
-                chatHistory: [],
-                pendingQuestion: nil,
-                pendingChoices: nil,
-                pendingTopics: nil
-            )
-        }
     }
+}
 
-    private func conversationContextText() -> String {
-        let baseText = braindumpText.trimmingCharacters(in: .whitespacesAndNewlines)
-        var lines: [String] = []
-
-        if !baseText.isEmpty {
-            lines.append(baseText)
-        }
-
-        // Skip system navigation prompts from AI ("Выбери фокус", "Выбери тактику"):
-        // they are UI labels, NOT real conversation content, and including them in
-        // the prompt confuses the model into thinking topic selection is still pending.
-        let systemPrompts = DialogLabel.all
-        for message in chatHistory {
-            if message.isAI {
-                guard !systemPrompts.contains(message.text) else { continue }
-                lines.append("Вопрос: \(message.text)")
-            } else {
-                lines.append("Ответ: \(message.text)")
-            }
-        }
-
-        return lines.joined(separator: "\n\n")
-    }
-
-    private func updateDraft(_ update: (BraindumpNote) -> Void) {
-        guard let pendingDraftID,
-              let note = viewModel.notes.first(where: { $0.id == pendingDraftID }) else {
-            return
-        }
-        update(note)
-        viewModel.saveNotes()
-    }
+#Preview {
+    @Previewable @State var isPresented = true
+    EntryOverlayView(
+        viewModel: makePreviewViewModel(),
+        isPresented: $isPresented
+    )
+    .preferredColorScheme(.dark)
 }

@@ -52,7 +52,7 @@ struct FocusDashboardView: View {
                         }
                         .buttonStyle(GearButtonStyle())
                     }
-                    .padding(.top, 8)
+                    .padding(.top, 24)
 
                     if let active = activeNote {
                         ActiveStickyBar(noteText: active.finalAction ?? active.storedAction ?? active.text) {
@@ -172,7 +172,7 @@ private struct ActiveStickyBar: View {
                 Text(noteText)
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(MentorioTheme.primaryText)
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 8)
@@ -196,6 +196,7 @@ private struct HoldToCompleteButton: View {
 
     @State private var progress: CGFloat = 0
     @State private var didFinish = false
+    @State private var timer: Timer? = nil
 
     var body: some View {
         ZStack {
@@ -218,23 +219,59 @@ private struct HoldToCompleteButton: View {
         .contentShape(Circle())
         .onLongPressGesture(minimumDuration: 3.0, maximumDistance: 44, pressing: { pressing in
             if pressing {
-                let generator = UIImpactFeedbackGenerator(style: .medium)
-                generator.prepare()
-                generator.impactOccurred()
                 didFinish = false
                 progress = 0
+                
+                // 0s: Light initial tap
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.prepare()
+                generator.impactOccurred()
+                
                 withAnimation(.linear(duration: 3.0)) {
                     progress = 1
                 }
-            } else if !didFinish {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    progress = 0
+                
+                // Track seconds
+                var secondsPassed = 0
+                timer?.invalidate()
+                timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                    secondsPassed += 1
+                    if secondsPassed == 1 {
+                        // 1s: Medium vibration
+                        let gen = UIImpactFeedbackGenerator(style: .medium)
+                        gen.prepare()
+                        gen.impactOccurred()
+                    } else if secondsPassed == 2 {
+                        // 2s: Rigid vibration (building up)
+                        if #available(iOS 16.0, *) {
+                            let gen = UIImpactFeedbackGenerator(style: .rigid)
+                            gen.prepare()
+                            gen.impactOccurred()
+                        } else {
+                            let gen = UIImpactFeedbackGenerator(style: .heavy)
+                            gen.prepare()
+                            gen.impactOccurred()
+                        }
+                    }
+                }
+            } else {
+                timer?.invalidate()
+                timer = nil
+                if !didFinish {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        progress = 0
+                    }
                 }
             }
         }, perform: {
-            let generator = UIImpactFeedbackGenerator(style: .heavy)
+            timer?.invalidate()
+            timer = nil
+            
+            // 3s: Small success "explosion"
+            let generator = UINotificationFeedbackGenerator()
             generator.prepare()
-            generator.impactOccurred()
+            generator.notificationOccurred(.success)
+            
             didFinish = true
             progress = 1
             onComplete()
@@ -243,6 +280,10 @@ private struct HoldToCompleteButton: View {
                 didFinish = false
             }
         })
+        .onDisappear {
+            timer?.invalidate()
+            timer = nil
+        }
     }
 }
 
@@ -277,7 +318,7 @@ private struct GearButtonStyle: ButtonStyle {
             .background(MentorioTheme.card)
             .clipShape(Circle())
             .scaleEffect(configuration.isPressed ? 0.9 : 1.0)
-            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
+            .animation(.spring(response: 0.15, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }
 

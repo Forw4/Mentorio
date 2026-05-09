@@ -4,5 +4,7 @@
 <dict>
 	<key>OPENROUTER_API_KEY</key>
 	<string>$(OPENROUTER_API_KEY)</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Mentorio использует камеру, чтобы ты мог сфотографировать артефакт или пруф выполненного шага.</string>
 </dict>
 </plist>

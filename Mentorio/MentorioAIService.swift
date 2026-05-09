@@ -6,7 +6,15 @@
 import Foundation
 import SwiftUI
 
-// MARK: - Public Response Model
+// MARK: - Mirror Response (v2.0)
+
+struct MirrorResponse: Codable {
+	let highlight: String  // Суть хаоса, 1-2 предложения
+	let action: String     // Одно действие, 10-15 мин
+	let emoji: String      // Одна эмодзи для карточки архива
+}
+
+// MARK: - Legacy Response Model (v1 — still used by NoteCardView)
 
 struct FocusResponse: Codable {
 	let topics: [String]?
@@ -16,28 +24,7 @@ struct FocusResponse: Codable {
 	let choices: [String]?
 }
 
-// MARK: - Continuation Context
 
-// StepIntensity kept for source compatibility but no longer used in prompts
-enum StepIntensity {
-    case micro
-    case normal
-}
-
-struct ContinuationContext {
-    let pastAction: String
-    let pastNote: String?
-    let contextSummary: String?
-    // intensity kept for backwards compat but ignored in logic
-    let intensity: StepIntensity
-
-    init(pastAction: String, pastNote: String? = nil, contextSummary: String? = nil, intensity: StepIntensity = .normal) {
-        self.pastAction = pastAction
-        self.pastNote = pastNote
-        self.contextSummary = contextSummary
-        self.intensity = intensity
-    }
-}
 
 // MARK: - Legacy ChatRequest (kept for public signatures)
 
@@ -138,7 +125,96 @@ enum MentorioAIService {
         return AIConfig(baseURL: url, apiKey: defaultKey, model: "openrouter/auto")
     }
 
-	// MARK: - Public API (Signatures preserved)
+	// MARK: - v2.0 Public API
+
+	/// One-shot braindump → mirror response. Returns highlight + action + emoji.
+	/// This is the ONLY AI call in the v2.0 flow.
+	static func getMirrorResponse(
+		for text: String,
+		retryHint: String? = nil
+	) async throws -> MirrorResponse {
+		let prompt = buildMirrorPrompt(text: text, retryHint: retryHint)
+		let raw = try await requestChatCompletion(prompt: prompt)
+		let cleaned = try cleanJSONText(raw)
+		guard let data = cleaned.data(using: .utf8) else {
+			throw MentorioAIError.invalidResponse
+		}
+
+		let decoded = try JSONDecoder().decode(MirrorResponse.self, from: data)
+
+		// Validate: highlight and action must be non-empty
+		let h = decoded.highlight.trimmingCharacters(in: .whitespacesAndNewlines)
+		let a = decoded.action.trimmingCharacters(in: .whitespacesAndNewlines)
+		let e = decoded.emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+
+		guard !h.isEmpty, !a.isEmpty else {
+			throw MentorioAIError.incompleteResponse
+		}
+
+		return MirrorResponse(
+			highlight: h,
+			action: a,
+			emoji: e.isEmpty ? "⚡" : e
+		)
+	}
+
+	// MARK: - Mirror Prompt (v2.0)
+
+	private static func buildMirrorPrompt(
+		text: String,
+		retryHint: String?
+	) -> String {
+		var prompt = """
+		OUTPUT ONLY VALID JSON. ZERO CONVERSATIONAL TEXT. NO MARKDOWN.
+
+		Ты — Mentorio, жёсткий ментор по поведенческой активации.
+		Твоя работа состоит из двух этапов:
+
+		═══ ЭТАП 1: ЗЕРКАЛО ═══
+		Честно сожми всё, что написал пользователь, в 1-2 предложения.
+		Это НЕ совет и НЕ диагноз. Это отражение: "вот что ты на самом деле сказал".
+		Покажи суть проблемы, а не эмоцию.
+		Если в тексте несколько проблем — выбери ту, которую проще всего сдвинуть прямо сейчас.
+
+		═══ ЭТАП 2: ОДИН ШАГ ═══
+		На основе зеркала дай ОДНО конкретное физическое действие — маленький шаг, который можно сделать прямо сейчас.
+		Действие должно ЛОГИЧЕСКИ ВЫТЕКАТЬ из сути.
+		Действие должно оставлять наблюдаемый артефакт во внешнем мире
+		(файл, заметка, сообщение, заявка, сохранённый вариант).
+
+		═══ ФОРМАТ ОТВЕТА (JSON, СТРОГО) ═══
+		{
+		  "highlight": "1-2 предложения. Без обращений к пользователю (не 'ты', не 'вы'). Без смайлов. Без слов 'я понимаю', 'это нормально'. Только сухая констатация сути.",
+		  "action": "Одна команда. Начинается с глагола (открой, напиши, отправь, создай, выбери). Маленький шаг — от 2 до 20 минут. Без слов 'подумать', 'осознать', 'переосмыслить'. Без знака вопроса.",
+		  "emoji": "Одна эмодзи, отражающая тему действия (📄, 🏠, 📞, 🏃, 🧹 и т.п.)"
+		}
+
+		═══ ЗАПРЕТЫ ═══
+		- Не задавай вопросов.
+		- Не предлагай "обсудить" или "подумать".
+		- Не используй фразы поддержки ("я понимаю", "это нормально", "ты молодец").
+		- Не используй кавычки вокруг значений JSON.
+		- Не добавляй markdown-разметку.
+		- Если в тексте несколько проблем — НЕ перечисляй их. Выбери одну и действуй.
+
+		═══ ТЕКСТ ПОЛЬЗОВАТЕЛЯ ═══
+		\(text)
+		"""
+
+		if let hint = retryHint, !hint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+			prompt += """
+
+
+			═══ ВАЖНО: ПРЕДЫДУЩИЙ ВАРИАНТ НЕ ПОДОШЁЛ ═══
+			Обратная связь: \(hint)
+			Дай ДРУГОЙ highlight и ДРУГОЕ действие. Не повторяй предыдущий ответ.
+			"""
+		}
+
+		return prompt
+	}
+
+	// MARK: - Legacy Public API (deprecated, kept for compilation)
 
 	/// LEGACY: читает только ранее сохранённый анализ из intentCache.
 	/// Не вызывает LLM сам по себе. Новому коду лучше использовать analyzeIntent(for:).
@@ -189,8 +265,7 @@ enum MentorioAIService {
 		userAnswer: String? = nil,
 		clarifyingAttempts: Int = 0,
         isFastTrack: Bool = false,
-        contextSummary: String? = nil,
-        continuation: ContinuationContext? = nil
+        contextSummary: String? = nil
 	) async throws -> FocusResponse {
         // Stage A (analyzeIntent) removed in Sprint 3 (#6).
         // It was a second API call used only to pass intent.rawValue into the prompt.
@@ -201,8 +276,7 @@ enum MentorioAIService {
 			userAnswer: userAnswer,
 			clarifyingAttempts: clarifyingAttempts,
             isFastTrack: isFastTrack,
-            contextSummary: contextSummary,
-            continuation: continuation
+            contextSummary: contextSummary
 		)
 
 		let raw = try await requestChatCompletion(prompt: prompt)
@@ -342,8 +416,7 @@ enum MentorioAIService {
 		userAnswer: String?,
 		clarifyingAttempts: Int,
         isFastTrack: Bool,
-        contextSummary: String?,
-        continuation: ContinuationContext? = nil
+        contextSummary: String?
 	) -> String {
 		return """
         OUTPUT ONLY VALID JSON. ZERO CONVERSATIONAL TEXT. NO MARKDOWN.
@@ -390,20 +463,6 @@ enum MentorioAIService {
         — Clarifying attempts: \(clarifyingAttempts)
         — Is Fast-Track: \(isFastTrack)
         — Context Summary: \(contextSummary ?? "[Нет резюме, используй исходный текст]")
-        
-        \(continuation != nil ? """
-        КОНТЕКСТ ПРОДОЛЖЕНИЯ — ПОЛЬЗОВАТЕЛЬ СДЕЛАЛ ШАГ И ХОЧЕТ СЛЕДУЮЩИЙ:
-        — Выполненное действие: \(continuation!.pastAction)
-        — Заметка пользователя: \(continuation!.pastNote ?? "нет")
-        — Резюме ситуации: \(continuation!.contextSummary ?? contextSummary ?? "нет")
-
-        ФОРМАТ ОТВЕТА ДЛЯ ПРОДОЛЖЕНИЯ:
-        Верни JSON с полем "choices": null и полем "question": null.
-        Верни только "highlight" = констатация факта победы (1 предложение, без похвалы: "Шаг сделан: <pastAction>."),
-        "insight" = краткий вывод о контексте (1 предложение),
-        а в поле "choices" — одно конкретное следующее физическое действие на 10–15 минут с артефактом во внешнем мире.
-        Всё в духе Mentorio: жёстко, без воды, без эмодзи, без метафор.
-        """ : "")
         
         ИСХОДНЫЕ ДАННЫЕ ЮЗЕРА:
         Брайндамп:

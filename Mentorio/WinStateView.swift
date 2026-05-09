@@ -7,6 +7,8 @@ struct WinStateView: View {
     let onToArchive: () -> Void
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
     @State private var selectedPhotoData: Data? = nil
+    @State private var isShowingCamera = false
+    @State private var capturedImage: UIImage? = nil
 
     var body: some View {
         ZStack {
@@ -27,11 +29,21 @@ struct WinStateView: View {
                         .padding(.horizontal, 28)
                 }
 
-                PhotosPicker(
-                    selection: $selectedPhotoItem,
-                    matching: .images,
-                    photoLibrary: .shared()
-                ) {
+                Menu {
+                    Button {
+                        isShowingCamera = true
+                    } label: {
+                        Label("Сделать фото", systemImage: "camera")
+                    }
+
+                    PhotosPicker(
+                        selection: $selectedPhotoItem,
+                        matching: .images,
+                        photoLibrary: .shared()
+                    ) {
+                        Label("Выбрать из галереи", systemImage: "photo.on.rectangle")
+                    }
+                } label: {
                     VStack(spacing: 8) {
                         Image(systemName: "plus")
                             .font(.system(size: 32, weight: .bold))
@@ -56,6 +68,20 @@ struct WinStateView: View {
                             onToArchive()
                         }
                     }
+                }
+                .onChange(of: capturedImage) { _, newImage in
+                    if let image = newImage, let data = image.jpegData(compressionQuality: 0.8) {
+                        selectedPhotoData = data
+                        if let note = (viewModel.notes + viewModel.archivedNotes).first(where: { $0.id == noteID }) {
+                            note.photoData = data
+                            note.completionProof = "local"
+                        }
+                        onToArchive()
+                    }
+                }
+                .fullScreenCover(isPresented: $isShowingCamera) {
+                    CameraImagePicker(selectedImage: $capturedImage)
+                        .ignoresSafeArea()
                 }
 
                 Button("To Archive") {

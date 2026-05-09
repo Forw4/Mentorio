@@ -272,7 +272,71 @@ class MentorioViewModel: ObservableObject {
         persistAndReload(userFacingError: "Не удалось архивировать заметку")
     }
     
-    // MARK: - State Transitions
+    // MARK: - v2.0 Mirror Flow
+
+    /// One-shot braindump → mirror response. Creates note, calls AI, returns result.
+    /// This is the ONLY AI call in the v2.0 flow.
+    func analyzeBraindump(
+        noteId: UUID,
+        text: String,
+        retryHint: String? = nil
+    ) async throws -> MirrorResponse {
+        guard let note = notes.first(where: { $0.id == noteId }) ?? fetchNote(by: noteId) else {
+            throw MentorioAIError.invalidResponse
+        }
+
+        note.state = .analyzing
+        updateNote(note)
+
+        do {
+            let mirror = try await MentorioAIService.getMirrorResponse(
+                for: text,
+                retryHint: retryHint
+            )
+
+            // Store highlight and emoji immediately (action stored on accept)
+            note.storedHighlight = mirror.highlight
+            note.actionEmoji = mirror.emoji
+            // Keep state as analyzing — EntryOverlayView will transition to .mirror
+            updateNote(note)
+            saveContextSilently()
+
+            trackProductEvent("mirror_generated", note: note, props: [
+                "has_retry_hint": retryHint != nil ? "true" : "false"
+            ])
+
+            return mirror
+        } catch {
+            note.state = .idle
+            updateNote(note)
+            setError("Не удалось получить анализ: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    /// Accept the mirror action — promote note to active + executing state.
+    func acceptMirrorAction(noteId: UUID, action: String, highlight: String, emoji: String) {
+        guard let note = notes.first(where: { $0.id == noteId }) ?? fetchNote(by: noteId) else { return }
+
+        note.storedAction = action
+        note.finalAction = action
+        note.storedHighlight = highlight
+        note.actionEmoji = emoji
+        note.status = .active
+        note.state = .executing(action: action)
+        executingNoteId = note.id
+
+        // Clear draft session fields
+        note.pendingQuestion = nil
+        note.pendingChoicesJSON = nil
+        note.pendingTopicsJSON = nil
+        note.chatHistoryData = nil
+
+        trackProductEvent("one_action_accepted", note: note)
+        persistAndReload(userFacingError: "Не удалось сохранить действие")
+    }
+
+    // MARK: - Legacy State Transitions (kept for compilation, will be removed)
     
     func startTransformation(for note: BraindumpNote) {
         guard let mutableNote = notes.first(where: { $0.id == note.id }) else { return }

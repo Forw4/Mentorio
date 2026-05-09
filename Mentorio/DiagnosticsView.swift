@@ -8,11 +8,6 @@ import UserNotifications
 import UIKit
 
 struct DiagnosticsView: View {
-    private struct SeedScenario: Identifiable {
-        let id = UUID()
-        let title: String
-        let prompt: String
-    }
 
     private enum EventLogFilter: String, CaseIterable, Identifiable {
         case all
@@ -45,19 +40,23 @@ struct DiagnosticsView: View {
     }
 
     private struct CoreLoopMetrics {
+        let braindumpCount: Int
         let generatedCount: Int
         let startedCount: Int
         let completedCount: Int
         let completionRate: Double?
+        let engagementRate: Double?
         let realityCaptureRate: Double?
         let avgTimeToFirstAction: TimeInterval?
         let avgTimeToFirstCompletion: TimeInterval?
 
         static let empty = CoreLoopMetrics(
+            braindumpCount: 0,
             generatedCount: 0,
             startedCount: 0,
             completedCount: 0,
             completionRate: nil,
+            engagementRate: nil,
             realityCaptureRate: nil,
             avgTimeToFirstAction: nil,
             avgTimeToFirstCompletion: nil
@@ -70,38 +69,13 @@ struct DiagnosticsView: View {
     @State private var notifications: [NotificationDebugItem] = []
     @State private var authStatus: UNAuthorizationStatus = .notDetermined
     @State private var testStatus: String? = nil
-    @State private var seedStatus: String? = nil
-    @State private var isSpawningScenarios = false
-    @State private var isClearingScenarios = false
+    @State private var isWipingData = false
     @State private var coreMetrics: CoreLoopMetrics = .empty
     @State private var eventFilter: EventLogFilter = .all
     @State private var isRunningAnchoringSuite = false
     @State private var anchoringSuiteReport: [String] = []
     @State private var anchoringSuiteRunAt: Date? = nil
     @State private var copyStatus: String? = nil
-
-    private let seedScenarios: [SeedScenario] = [
-        SeedScenario(
-            title: "Карьерный выбор (High-Stakes)",
-            prompt: "Мне 26, я backend-разработчик. Есть оффер в Берлине с зарплатой выше на 40%, но это переезд, разлука с семьей и смена команды. Если остаюсь, стабильность и друзья рядом, но рост медленнее. Уже месяц сравниваю и не могу выбрать."
-        ),
-        SeedScenario(
-            title: "Ресурс или отмазка (Preconditions)",
-            prompt: "Хочу начать брать заказы по моушен-дизайну, но постоянно говорю, что без нового ноутбука старт бессмысленен. Денег впритык. Не понимаю, это реальный блокер или я просто избегаю первого клиента."
-        ),
-        SeedScenario(
-            title: "Сложный разговор (Личные отношения)",
-            prompt: "Тяну разговор с партнером о деньгах и бытовых обязанностях уже 3 недели. Накопилось раздражение, но каждый вечер откладываю и делаю вид, что все нормально."
-        ),
-        SeedScenario(
-            title: "Туман и перегруз (Vague Overwhelm)",
-            prompt: "Последние два месяца я как в тумане: сплю плохо, срываю дедлайны, скроллю до ночи и злюсь на себя. Хочу собраться, но не понимаю, за что хвататься первым."
-        ),
-        SeedScenario(
-            title: "Многотемный хаос (Topics)",
-            prompt: "У меня одновременно горит диплом, долг по кредитке, поиск новой квартиры и конфликт с другом из-за совместного проекта. В голове каша, ничего не двигается."
-        )
-    ]
 
     var body: some View {
         List {
@@ -184,12 +158,32 @@ struct DiagnosticsView: View {
                 }
             }
 
-            Section("Core Loop Metrics") {
+            Section("Воронка конверсии (Core Funnel)") {
                 metricRow(
-                    title: "Completion Rate",
-                    value: percentString(coreMetrics.completionRate),
-                    subtitle: "\(coreMetrics.completedCount) из \(coreMetrics.generatedCount) generated"
+                    title: "1. Выгрузка (Braindump)",
+                    value: "\(coreMetrics.braindumpCount)",
+                    subtitle: "Попытки выговориться"
                 )
+
+                metricRow(
+                    title: "2. Сгенерирован шаг",
+                    value: "\(coreMetrics.generatedCount)",
+                    subtitle: "Нейросеть дала ответ"
+                )
+
+                metricRow(
+                    title: "3. Шаг взят в работу",
+                    value: "\(coreMetrics.startedCount)",
+                    subtitle: "Конверсия из старта: \(percentString(coreMetrics.engagementRate))"
+                )
+
+                metricRow(
+                    title: "4. Шаг выполнен",
+                    value: "\(coreMetrics.completedCount)",
+                    subtitle: "Конверсия из взятого: \(percentString(coreMetrics.completionRate))"
+                )
+
+                Divider()
 
                 metricRow(
                     title: "Reality Check Capture",
@@ -200,19 +194,13 @@ struct DiagnosticsView: View {
                 metricRow(
                     title: "Time to First Action",
                     value: durationString(coreMetrics.avgTimeToFirstAction),
-                    subtitle: "среднее: braindump_started -> one_action_started"
+                    subtitle: "среднее: braindump -> action_started"
                 )
 
                 metricRow(
                     title: "Time to First Completion",
                     value: durationString(coreMetrics.avgTimeToFirstCompletion),
-                    subtitle: "среднее: braindump_started -> one_action_completed"
-                )
-
-                metricRow(
-                    title: "Notes Started",
-                    value: "\(coreMetrics.startedCount)",
-                    subtitle: "уникальные note_id с one_action_started"
+                    subtitle: "среднее: braindump -> action_completed"
                 )
             }
 
@@ -257,33 +245,30 @@ struct DiagnosticsView: View {
                 }
             }
 
-            Section("Тестовые сценарии") {
-                Button(isSpawningScenarios ? "Добавление в процессе..." : "Добавить 5 сценариев на главный экран") {
-                    spawnSeedScenarios()
-                }
-                .disabled(isSpawningScenarios || isClearingScenarios)
-
-                Button(isClearingScenarios ? "Очистка в процессе..." : "Очистить тестовые сценарии") {
-                    clearSeedScenarios()
-                }
-                .disabled(isSpawningScenarios || isClearingScenarios)
-
-                if let seedStatus {
-                    Text(seedStatus)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                ForEach(seedScenarios) { scenario in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(scenario.title)
-                            .font(.subheadline.weight(.semibold))
-                        Text(scenario.prompt)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(3)
+            Section("God Mode (Осторожно)") {
+                Button(role: .destructive) {
+                    isWipingData = true
+                    viewModel.deleteAllData()
+                    AnalyticsManager.shared.track("diagnostics_god_mode_wipe_data", properties: ["channel": "debug"])
+                    Task {
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                        isWipingData = false
+                        await refreshData()
                     }
-                    .padding(.vertical, 2)
+                } label: {
+                    HStack {
+                        Text(isWipingData ? "Удаление..." : "Сбросить все данные")
+                        Spacer()
+                        if isWipingData {
+                            ProgressView()
+                        }
+                    }
+                    .foregroundStyle(.red)
+                }
+                .disabled(isWipingData)
+
+                Button("Сбросить кэш уведомлений") {
+                    UserDefaults.standard.removeObject(forKey: "mentorio_last_open_date")
                 }
             }
         }
@@ -318,6 +303,7 @@ struct DiagnosticsView: View {
     }
 
     private func computeCoreMetrics(from events: [AnalyticsEventSnapshot]) -> CoreLoopMetrics {
+        var braindumpIDs = Set<String>()
         var generatedIDs = Set<String>()
         var startedIDs = Set<String>()
         var completedIDs = Set<String>()
@@ -333,6 +319,7 @@ struct DiagnosticsView: View {
 
             switch event.name {
             case "braindump_started":
+                braindumpIDs.insert(noteID)
                 if braindumpByNote[noteID] == nil {
                     braindumpByNote[noteID] = event.timestamp
                 }
@@ -357,11 +344,18 @@ struct DiagnosticsView: View {
             }
         }
 
+        let engagementRate: Double?
+        if braindumpIDs.isEmpty {
+            engagementRate = nil
+        } else {
+            engagementRate = Double(startedIDs.count) / Double(braindumpIDs.count)
+        }
+
         let completionRate: Double?
-        if generatedIDs.isEmpty {
+        if startedIDs.isEmpty {
             completionRate = nil
         } else {
-            completionRate = Double(completedIDs.count) / Double(generatedIDs.count)
+            completionRate = Double(completedIDs.count) / Double(startedIDs.count)
         }
 
         let realityDenominator = realitySelectedIDs.union(realitySkippedIDs).count
@@ -388,10 +382,12 @@ struct DiagnosticsView: View {
         let avgTFC = tfcIntervals.isEmpty ? nil : tfcIntervals.reduce(0, +) / Double(tfcIntervals.count)
 
         return CoreLoopMetrics(
+            braindumpCount: braindumpIDs.count,
             generatedCount: generatedIDs.count,
             startedCount: startedIDs.count,
             completedCount: completedIDs.count,
             completionRate: completionRate,
+            engagementRate: engagementRate,
             realityCaptureRate: realityCaptureRate,
             avgTimeToFirstAction: avgTFA,
             avgTimeToFirstCompletion: avgTFC
@@ -455,63 +451,7 @@ struct DiagnosticsView: View {
         return "\(minutes)м \(seconds)с"
     }
 
-    @MainActor
-    private func spawnSeedScenarios() {
-        isSpawningScenarios = true
 
-        var existing = Set(
-            (viewModel.notes + viewModel.archivedNotes + viewModel.deletedNotes)
-                .map { normalizedText($0.text) }
-        )
-
-        var added = 0
-        var skipped = 0
-
-        for scenario in seedScenarios {
-            let normalizedPrompt = normalizedText(scenario.prompt)
-            if existing.contains(normalizedPrompt) {
-                skipped += 1
-                continue
-            }
-
-            let note = viewModel.addNote(scenario.prompt, source: "diagnostics_seed")
-            if let data = viewModel.encodeChatHistory([(isAI: false, text: scenario.prompt)]) {
-                note.chatHistoryData = data
-            }
-            existing.insert(normalizedPrompt)
-            added += 1
-        }
-
-        seedStatus = "Добавлено: \(added), пропущено (уже были): \(skipped). Проверь основной экран заметок."
-        AnalyticsManager.shared.track("diagnostics_seed_scenarios_spawned", properties: [
-            "channel": "debug",
-            "added": "\(added)",
-            "skipped": "\(skipped)",
-            "total": "\(seedScenarios.count)"
-        ])
-
-        isSpawningScenarios = false
-    }
-
-    @MainActor
-    private func clearSeedScenarios() {
-        isClearingScenarios = true
-
-        let removed = viewModel.purgeNotes(matchingTexts: seedScenarios.map(\.prompt))
-        if removed > 0 {
-            seedStatus = "Очищено тестовых сценариев: \(removed)."
-        } else {
-            seedStatus = "Тестовые сценарии для очистки не найдены."
-        }
-
-        AnalyticsManager.shared.track("diagnostics_seed_scenarios_cleared", properties: [
-            "channel": "debug",
-            "removed": "\(removed)",
-            "total": "\(seedScenarios.count)"
-        ])
-
-        isClearingScenarios = false
-    }
 
     private func normalizedText(_ value: String) -> String {
         value

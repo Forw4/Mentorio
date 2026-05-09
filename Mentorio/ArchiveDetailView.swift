@@ -10,8 +10,8 @@ struct ArchiveDetailView: View {
     @State private var currentReflectionInput: String = ""
     @Binding var selectedNoteID: UUID?
     
-    @State private var isShowingContinuation = false
-    @AppStorage("isContinuationEnabled") private var isContinuationEnabled: Bool = false
+    @State private var isShowingCamera = false
+    @State private var capturedImage: UIImage? = nil
 
     private var actionText: String {
         note.finalAction ?? note.storedAction ?? note.text
@@ -37,7 +37,6 @@ struct ArchiveDetailView: View {
                 headerSection
                 artifactSection
                 reflectionSection
-                continuationSection
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 24)
@@ -46,22 +45,6 @@ struct ArchiveDetailView: View {
         .background(Color.black.opacity(0.88).ignoresSafeArea())
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .fullScreenCover(isPresented: $isShowingContinuation, onDismiss: {
-            if viewModel.notes.contains(where: { !$0.isCompleted && $0.deletedAt == nil && !$0.isInTrash }) {
-                selectedNoteID = nil
-            }
-        }) {
-            EntryOverlayView(
-                viewModel: viewModel,
-                isPresented: $isShowingContinuation,
-                existingNote: nil,
-                continuationContext: ContinuationContext(
-                    pastAction: actionText,
-                    pastNote: currentReflectionInput.isEmpty ? nil : currentReflectionInput,
-                    contextSummary: note.contextSummary
-                )
-            )
-        }
     }
 
     private var headerBar: some View {
@@ -125,11 +108,21 @@ struct ArchiveDetailView: View {
                 .foregroundColor(Color(red: 85.0 / 255.0, green: 85.0 / 255.0, blue: 85.0 / 255.0))
 
             if !hasArtifact {
-                PhotosPicker(
-                    selection: $selectedPhotoItem,
-                    matching: .images,
-                    photoLibrary: .shared()
-                ) {
+                Menu {
+                    Button {
+                        isShowingCamera = true
+                    } label: {
+                        Label("Сделать фото", systemImage: "camera")
+                    }
+
+                    PhotosPicker(
+                        selection: $selectedPhotoItem,
+                        matching: .images,
+                        photoLibrary: .shared()
+                    ) {
+                        Label("Выбрать из галереи", systemImage: "photo.on.rectangle")
+                    }
+                } label: {
                     RoundedRectangle(cornerRadius: 10)
                         .stroke(style: StrokeStyle(lineWidth: 1, dash: [6]))
                         .foregroundColor(Color.white.opacity(0.18))
@@ -153,6 +146,17 @@ struct ArchiveDetailView: View {
                             note.completionProof = "local"
                         }
                     }
+                }
+                .onChange(of: capturedImage) { _, newImage in
+                    if let image = newImage, let data = image.jpegData(compressionQuality: 0.8) {
+                        selectedPhotoData = data
+                        note.photoData = data
+                        note.completionProof = "local"
+                    }
+                }
+                .fullScreenCover(isPresented: $isShowingCamera) {
+                    CameraImagePicker(selectedImage: $capturedImage)
+                        .ignoresSafeArea()
                 }
             } else {
                 if let data = selectedPhotoData ?? note.photoData,
@@ -227,24 +231,7 @@ struct ArchiveDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private var continuationSection: some View {
-        if isContinuationEnabled {
-            Button {
-                isShowingContinuation = true
-            } label: {
-                Text("Сделать ещё один шаг")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(.black)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(MentorioTheme.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 16)
-        }
-    }
+
 
     private var reflectionDivider: some View {
         Rectangle()
@@ -311,5 +298,44 @@ private struct ArchiveDetailPreview: View {
 
     var body: some View {
         ArchiveDetailView(note: note, selectedNoteID: $selectedNoteID)
+    }
+}
+
+// MARK: - Camera Image Picker
+
+struct CameraImagePicker: UIViewControllerRepresentable {
+    @Binding var selectedImage: UIImage?
+    @Environment(\.presentationMode) var presentationMode
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.delegate = context.coordinator
+        picker.sourceType = .camera
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let parent: CameraImagePicker
+
+        init(_ parent: CameraImagePicker) {
+            self.parent = parent
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
+            if let uiImage = info[.originalImage] as? UIImage {
+                parent.selectedImage = uiImage
+            }
+            parent.presentationMode.wrappedValue.dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.presentationMode.wrappedValue.dismiss()
+        }
     }
 }

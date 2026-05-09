@@ -15,7 +15,6 @@ struct SettingsView: View {
     @AppStorage("customAIBaseURL") private var customAIBaseURL: String = ""
     @AppStorage("customAIKey") private var customAIKey: String = ""
     @AppStorage("customAIModel") private var customAIModel: String = ""
-    @AppStorage("isContinuationEnabled") private var isContinuationEnabled: Bool = false
     @FocusState private var nameFieldFocused: Bool
 
     @AppStorage("appTheme") private var appTheme: AppTheme = .system
@@ -268,25 +267,6 @@ struct SettingsView: View {
         settingsCard {
             sectionLabel("Отладка")
 
-            Toggle(isOn: $isContinuationEnabled) {
-                HStack(spacing: 12) {
-                    Image(systemName: "flask")
-                        .foregroundStyle(MentorioTheme.accent)
-                        .frame(width: 24)
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Эксперимент: ещё один шаг")
-                            .font(.body.weight(.medium))
-                            .foregroundStyle(MentorioTheme.primaryText)
-                        Text("Экспериментальная кнопка продолжения задачи")
-                            .font(.caption)
-                            .foregroundStyle(MentorioTheme.secondaryText)
-                    }
-                }
-            }
-            .tint(MentorioTheme.accent)
-            .padding(.vertical, 6)
-
             Divider()
                 .background(MentorioTheme.stroke)
 
@@ -321,7 +301,6 @@ struct SettingsView: View {
                 customAIBaseURL = ""
                 customAIKey = ""
                 customAIModel = ""
-                isContinuationEnabled = false
                 userName = ""
             }
             Button("Отмена", role: .cancel) {}
