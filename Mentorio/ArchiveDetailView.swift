@@ -12,6 +12,8 @@ struct ArchiveDetailView: View {
     
     @State private var isShowingCamera = false
     @State private var capturedImage: UIImage? = nil
+    @State private var isShowingPhotoPicker = false
+    @State private var isShowingOptions = false
 
     private var actionText: String {
         note.finalAction ?? note.storedAction ?? note.text
@@ -108,20 +110,8 @@ struct ArchiveDetailView: View {
                 .foregroundColor(Color(red: 85.0 / 255.0, green: 85.0 / 255.0, blue: 85.0 / 255.0))
 
             if !hasArtifact {
-                Menu {
-                    Button {
-                        isShowingCamera = true
-                    } label: {
-                        Label("Сделать фото", systemImage: "camera")
-                    }
-
-                    PhotosPicker(
-                        selection: $selectedPhotoItem,
-                        matching: .images,
-                        photoLibrary: .shared()
-                    ) {
-                        Label("Выбрать из галереи", systemImage: "photo.on.rectangle")
-                    }
+                Button {
+                    isShowingOptions = true
                 } label: {
                     RoundedRectangle(cornerRadius: 10)
                         .stroke(style: StrokeStyle(lineWidth: 1, dash: [6]))
@@ -138,6 +128,22 @@ struct ArchiveDetailView: View {
                             }
                         )
                 }
+                .buttonStyle(.plain)
+                .confirmationDialog("Прикрепить фото/артефакт", isPresented: $isShowingOptions, titleVisibility: .visible) {
+                    Button("Сделать фото") {
+                        isShowingCamera = true
+                    }
+                    Button("Выбрать из галереи") {
+                        isShowingPhotoPicker = true
+                    }
+                    Button("Отмена", role: .cancel) {}
+                }
+                .photosPicker(
+                    isPresented: $isShowingPhotoPicker,
+                    selection: $selectedPhotoItem,
+                    matching: .images,
+                    photoLibrary: .shared()
+                )
                 .onChange(of: selectedPhotoItem) { _, newItem in
                     Task {
                         if let data = try? await newItem?.loadTransferable(type: Data.self) {

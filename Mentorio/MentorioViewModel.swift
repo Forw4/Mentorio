@@ -196,6 +196,10 @@ class MentorioViewModel: ObservableObject {
         if executingNoteId == id {
             executingNoteId = nil
         }
+        
+        NotificationManager.shared.cancelAbandonedIntakeNotification(for: id)
+        NotificationManager.shared.cancelOverdueActiveStepNotifications(for: id)
+        
         persistAndReload(userFacingError: "Не удалось удалить заметку")
     }
 
@@ -231,6 +235,10 @@ class MentorioViewModel: ObservableObject {
         if executingNoteId == id {
             executingNoteId = nil
         }
+        
+        NotificationManager.shared.cancelAbandonedIntakeNotification(for: id)
+        NotificationManager.shared.cancelOverdueActiveStepNotifications(for: id)
+        
         persistAndReload(userFacingError: "Не удалось удалить заметку навсегда")
     }
     
@@ -268,7 +276,7 @@ class MentorioViewModel: ObservableObject {
         note.deletedAt = nil
         note.isInTrash = false
 
-        NotificationManager.shared.schedulePostActionNotification(for: note.id)
+        NotificationManager.shared.cancelOverdueActiveStepNotifications(for: note.id)
         persistAndReload(userFacingError: "Не удалось архивировать заметку")
     }
     
@@ -305,6 +313,8 @@ class MentorioViewModel: ObservableObject {
                 "has_retry_hint": retryHint != nil ? "true" : "false"
             ])
 
+            NotificationManager.shared.scheduleAbandonedIntakeNotification(for: note.id)
+
             return mirror
         } catch {
             note.state = .idle
@@ -333,6 +343,8 @@ class MentorioViewModel: ObservableObject {
         note.chatHistoryData = nil
 
         trackProductEvent("one_action_accepted", note: note)
+        NotificationManager.shared.cancelAbandonedIntakeNotification(for: note.id)
+        NotificationManager.shared.scheduleOverdueActiveStepNotifications(for: note.id, actionText: action, emoji: emoji)
         persistAndReload(userFacingError: "Не удалось сохранить действие")
     }
 
@@ -683,6 +695,9 @@ class MentorioViewModel: ObservableObject {
         note.storedAction = nil
         note.isFastTrack = false
         updateNote(note)
+        
+        NotificationManager.shared.cancelOverdueActiveStepNotifications(for: noteId)
+        
         saveContextSilently()
         executingNoteId = nil
         focusedNoteID = nil

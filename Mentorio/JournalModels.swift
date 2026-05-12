@@ -8,9 +8,33 @@ import SwiftData
 
 // MARK: - Braindump Note State Machine
 
-enum RealityCheckResult: String, Codable {
-    case easierThanExpected = "Оказалось проще, чем я думал"
-    case hardWork = "Пришлось попотеть"
+enum RealityCheckResult: String, Codable, CaseIterable {
+    case survival = "Выживал"
+    case hard = "С усилием"
+    case normal = "Нормально"
+    case easy = "Зашло легко"
+    case effortless = "На одном дыхании"
+    
+    var effortScore: Int {
+        switch self {
+        case .survival: return 1
+        case .hard: return 2
+        case .normal: return 3
+        case .easy: return 4
+        case .effortless: return 5
+        }
+    }
+    
+    init?(score: Int) {
+        switch score {
+        case 1: self = .survival
+        case 2: self = .hard
+        case 3: self = .normal
+        case 4: self = .easy
+        case 5: self = .effortless
+        default: return nil
+        }
+    }
 }
 
 // NoteStatus is defined in Note.swift; reuse that definition to avoid redeclaration.

@@ -20,6 +20,7 @@ struct EntryOverlayView: View {
     private enum EntryState: Equatable {
         case braindump
         case analyzing
+        case intake(text: String)  // Brief "received" confirmation before mirror card
         case mirror(highlight: String, action: String, emoji: String)
     }
 
@@ -145,6 +146,7 @@ struct EntryOverlayView: View {
                             bubble(text: "Сжимаю суть...", role: .mentor)
                         }
 
+
                         // 4. Mirror card (highlight + action + buttons)
                         if case .mirror(let highlight, let action, let emoji) = entryState {
                             mirrorCardBubble(highlight: highlight, action: action, emoji: emoji)
@@ -246,6 +248,7 @@ struct EntryOverlayView: View {
         switch entryState {
         case .braindump: return "В чем затык?"
         case .analyzing: return "Сжимаю суть"
+        case .intake: return "Принял"
         case .mirror: return "Зеркало"
         }
     }
@@ -257,7 +260,7 @@ struct EntryOverlayView: View {
         switch entryState {
         case .braindump:
             braindumpInputField
-        case .analyzing:
+        case .analyzing, .intake:
             ProgressView()
                 .tint(MentorioTheme.accent)
                 .frame(maxWidth: .infinity)
@@ -561,6 +564,17 @@ extension EntryOverlayView {
 
             guard !Task.isCancelled else { return }
 
+            // Step 1: Show intake bubble ("Три проблемы. Беру одну.")
+            await MainActor.run {
+                chatHistory.append(ChatMessage(isAI: true, text: mirror.intake))
+                entryState = .intake(text: mirror.intake)
+            }
+
+            // Step 2: Brief pause so user registers the intake
+            try? await Task.sleep(for: .seconds(2.0))
+            guard !Task.isCancelled else { return }
+
+            // Step 3: Transition to mirror card
             await MainActor.run {
                 entryState = .mirror(
                     highlight: mirror.highlight,
@@ -590,19 +604,25 @@ extension EntryOverlayView {
     }
 
     private func regenerateAction() {
-        guard case .mirror = entryState else { return }
+        guard case .mirror(let prevHighlight, let prevAction, _) = entryState else { return }
 
-        // Clean chat: just show that we're rethinking, no dump of old response
-        chatHistory.append(ChatMessage(isAI: true, text: "Переформулирую."))
+        // Append user rejection bubble to maintain chat rhythm
+        chatHistory.append(ChatMessage(isAI: false, text: "Не то"))
 
         entryState = .analyzing
         errorMessage = nil
 
         activeTask?.cancel()
         activeTask = Task {
+            // Pass previous highlight + action so AI can consciously change direction
+            let hint = """
+            Предыдущий highlight: \(prevHighlight)
+            Предыдущий action: \(prevAction)
+            Пользователь нажал "Не то". Дай ДРУГОЙ highlight и ДРУГОЕ действие.
+            """
             await runMirrorAnalysis(
                 text: braindumpText,
-                retryHint: "Предыдущий вариант не подошёл пользователю. Дай ДРУГОЙ highlight и ДРУГОЕ действие."
+                retryHint: hint
             )
         }
     }

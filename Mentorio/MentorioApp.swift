@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct MentorioApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome: Bool = false
     @AppStorage("appTheme") private var appTheme: AppTheme = .system
 
@@ -18,6 +19,11 @@ struct MentorioApp: App {
             .animation(.easeInOut(duration: 0.3), value: appTheme)
             .background(MentorioTheme.background.ignoresSafeArea())
             .tint(MentorioTheme.accent)
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active {
+                    NotificationManager.shared.handleAppBecameActive()
+                }
+            }
         }
     }
 }

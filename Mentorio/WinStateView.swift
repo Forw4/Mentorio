@@ -9,6 +9,10 @@ struct WinStateView: View {
     @State private var selectedPhotoData: Data? = nil
     @State private var isShowingCamera = false
     @State private var capturedImage: UIImage? = nil
+    @State private var realityCheckValue: RealityCheckResult = .normal
+
+    @State private var isShowingPhotoPicker = false
+    @State private var isShowingOptions = false
 
     var body: some View {
         ZStack {
@@ -29,20 +33,12 @@ struct WinStateView: View {
                         .padding(.horizontal, 28)
                 }
 
-                Menu {
-                    Button {
-                        isShowingCamera = true
-                    } label: {
-                        Label("Сделать фото", systemImage: "camera")
-                    }
+                EffortSliderView(effort: $realityCheckValue)
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 8)
 
-                    PhotosPicker(
-                        selection: $selectedPhotoItem,
-                        matching: .images,
-                        photoLibrary: .shared()
-                    ) {
-                        Label("Выбрать из галереи", systemImage: "photo.on.rectangle")
-                    }
+                Button {
+                    isShowingOptions = true
                 } label: {
                     VStack(spacing: 8) {
                         Image(systemName: "plus")
@@ -57,6 +53,21 @@ struct WinStateView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
                 .padding(.horizontal, 24)
+                .confirmationDialog("Прикрепить фото/артефакт", isPresented: $isShowingOptions, titleVisibility: .visible) {
+                    Button("Сделать фото") {
+                        isShowingCamera = true
+                    }
+                    Button("Выбрать из галереи") {
+                        isShowingPhotoPicker = true
+                    }
+                    Button("Отмена", role: .cancel) {}
+                }
+                .photosPicker(
+                    isPresented: $isShowingPhotoPicker,
+                    selection: $selectedPhotoItem,
+                    matching: .images,
+                    photoLibrary: .shared()
+                )
                 .onChange(of: selectedPhotoItem) { _, newItem in
                     Task {
                         if let data = try? await newItem?.loadTransferable(type: Data.self) {
@@ -65,7 +76,7 @@ struct WinStateView: View {
                                 note.photoData = data
                                 note.completionProof = "local"
                             }
-                            onToArchive()
+                            saveRealityCheckAndArchive()
                         }
                     }
                 }
@@ -76,7 +87,7 @@ struct WinStateView: View {
                             note.photoData = data
                             note.completionProof = "local"
                         }
-                        onToArchive()
+                        saveRealityCheckAndArchive()
                     }
                 }
                 .fullScreenCover(isPresented: $isShowingCamera) {
@@ -84,8 +95,8 @@ struct WinStateView: View {
                         .ignoresSafeArea()
                 }
 
-                Button("To Archive") {
-                    onToArchive()
+                Button("В архив") {
+                    saveRealityCheckAndArchive()
                 }
                 .font(.headline)
                 .foregroundStyle(MentorioTheme.primaryText)
@@ -98,6 +109,13 @@ struct WinStateView: View {
                 Spacer()
             }
         }
+    }
+    
+    private func saveRealityCheckAndArchive() {
+        if let note = (viewModel.notes + viewModel.archivedNotes).first(where: { $0.id == noteID }) {
+            note.realityCheck = realityCheckValue
+        }
+        onToArchive()
     }
 }
 

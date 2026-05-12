@@ -12,6 +12,7 @@ struct FocusDashboardView: View {
     @State private var selectedDraftNote: BraindumpNote? = nil
     @State private var showVictoryDeleteAlert = false
     @State private var showSettings = false
+    @State private var isWiggleMode = false
 
     private var activeNote: BraindumpNote? {
         // Only show a note as "active" if it has been explicitly promoted
@@ -33,6 +34,13 @@ struct FocusDashboardView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             MentorioTheme.background.ignoresSafeArea()
+                .onTapGesture {
+                    if isWiggleMode {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            isWiggleMode = false
+                        }
+                    }
+                }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -65,10 +73,36 @@ struct FocusDashboardView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                     }
 
-                    Text("Drafts")
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.76))
-                        .padding(.top, 6)
+                    HStack {
+                        Text("Drafts")
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.76))
+                        
+                        Spacer()
+                        
+                        if isWiggleMode && !draftNotes.isEmpty {
+                            Button("Готово") {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                    isWiggleMode = false
+                                }
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(MentorioTheme.primaryText)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .fill(.ultraThinMaterial)
+                            )
+                            .overlay(
+                                Capsule()
+                                    .stroke(MentorioTheme.stroke, lineWidth: 1)
+                            )
+                            .shadow(color: Color.black.opacity(0.15), radius: 4, y: 2)
+                            .transition(.scale.combined(with: .opacity))
+                        }
+                    }
+                    .padding(.top, 6)
 
                     if draftNotes.isEmpty {
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -82,21 +116,37 @@ struct FocusDashboardView: View {
                     } else {
                         LazyVStack(spacing: 12) {
                             ForEach(draftNotes) { note in
-                                DraftCard(text: note.text)
-                                    .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                    .onTapGesture {
+                                DraftCard(
+                                    text: note.text,
+                                    isWiggleMode: isWiggleMode,
+                                    onDelete: {
+                                        let impact = UIImpactFeedbackGenerator(style: .medium)
+                                        impact.impactOccurred()
+                                        withAnimation {
+                                            handleDelete(note)
+                                        }
+                                    }
+                                )
+                                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .onLongPressGesture(minimumDuration: 0.5) {
+                                    let impact = UIImpactFeedbackGenerator(style: .heavy)
+                                    impact.impactOccurred()
+                                    withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+                                        isWiggleMode = true
+                                    }
+                                }
+                                .onTapGesture {
+                                    if isWiggleMode {
+                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                            isWiggleMode = false
+                                        }
+                                    } else {
                                         selectedDraftNote = note
                                         withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
                                             isShowingEntry = true
                                         }
                                     }
-                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                        Button(role: .destructive) {
-                                            handleDelete(note)
-                                        } label: {
-                                            Label("Удалить", systemImage: "trash")
-                                        }
-                                    }
+                                }
                             }
                         }
                     }
@@ -105,22 +155,25 @@ struct FocusDashboardView: View {
                 .padding(.bottom, 120)
             }
 
-            Button {
-                selectedDraftNote = nil
-                withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
-                    isShowingEntry = true
+            if !isWiggleMode {
+                Button {
+                    selectedDraftNote = nil
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
+                        isShowingEntry = true
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 28, weight: .bold))
+                        .foregroundStyle(.black)
+                        .frame(width: 68, height: 68)
+                        .background(MentorioTheme.accent)
+                        .clipShape(Circle())
+                        .shadow(color: MentorioTheme.accent.opacity(0.4), radius: 12, x: 0, y: 8)
                 }
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(.black)
-                    .frame(width: 68, height: 68)
-                    .background(MentorioTheme.accent)
-                    .clipShape(Circle())
-                    .shadow(color: MentorioTheme.accent.opacity(0.4), radius: 12, x: 0, y: 8)
+                .padding(.bottom, 10)
+                .safeAreaPadding(.bottom, 8)
+                .transition(.scale.combined(with: .opacity))
             }
-            .padding(.bottom, 10)
-            .safeAreaPadding(.bottom, 8)
         }
         .fullScreenCover(isPresented: $isShowingEntry, onDismiss: {
             selectedDraftNote = nil
@@ -146,6 +199,13 @@ struct FocusDashboardView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
                 .environmentObject(viewModel)
+        }
+        .onChange(of: draftNotes.isEmpty) { _, isEmpty in
+            if isEmpty && isWiggleMode {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    isWiggleMode = false
+                }
+            }
         }
     }
 
@@ -289,23 +349,75 @@ private struct HoldToCompleteButton: View {
 
 private struct DraftCard: View {
     let text: String
+    let isWiggleMode: Bool
+    let onDelete: () -> Void
+
+    @State private var isWiggling = false
 
     var body: some View {
-        Text(text)
-            .font(.body)
-            .foregroundStyle(MentorioTheme.primaryText.opacity(0.82))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(MentorioTheme.card)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(MentorioTheme.stroke, lineWidth: 1)
-                    )
-            )
-            .opacity(0.72)
-            .blur(radius: 0.25)
+        ZStack(alignment: .topTrailing) {
+            Text(text)
+                .font(.body)
+                .foregroundStyle(MentorioTheme.primaryText.opacity(0.82))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(MentorioTheme.card)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .stroke(isWiggleMode ? MentorioTheme.accent.opacity(0.5) : MentorioTheme.stroke, lineWidth: 1)
+                        )
+                )
+                .opacity(0.72)
+                .blur(radius: 0.25)
+            
+            if isWiggleMode {
+                Button(action: {
+                    onDelete()
+                }) {
+                    Image(systemName: "minus")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(MentorioTheme.primaryText.opacity(0.75))
+                        .frame(width: 22, height: 22)
+                        .background(
+                            Circle()
+                                .fill(.ultraThinMaterial)
+                        )
+                        .overlay(
+                            Circle()
+                                .stroke(MentorioTheme.stroke, lineWidth: 1)
+                        )
+                        .shadow(color: Color.black.opacity(0.15), radius: 3, y: 1.5)
+                        .offset(x: 6, y: -6)
+                }
+                .transition(.scale.combined(with: .opacity))
+                .zIndex(2)
+            }
+        }
+        .rotationEffect(.degrees(isWiggleMode ? (isWiggling ? 1.0 : -1.0) : 0))
+        .offset(y: isWiggleMode ? (isWiggling ? 0.8 : -0.8) : 0)
+        .onChange(of: isWiggleMode) { _, newValue in
+            if newValue {
+                startWiggle()
+            } else {
+                isWiggling = false
+            }
+        }
+        .onAppear {
+            if isWiggleMode {
+                startWiggle()
+            }
+        }
+    }
+
+    private func startWiggle() {
+        let delay = Double.random(in: 0...0.15)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            withAnimation(Animation.easeInOut(duration: 0.12).repeatForever(autoreverses: true)) {
+                isWiggling = true
+            }
+        }
     }
 }
 

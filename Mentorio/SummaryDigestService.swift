@@ -50,8 +50,8 @@ enum SummaryDigestService {
 
         guard !scopedNotes.isEmpty else { return nil }
 
-        let easyCount = completedNotes.filter { $0.realityCheck == .easierThanExpected }.count
-        let hardCount = completedNotes.filter { $0.realityCheck == .hardWork }.count
+        let easyCount = completedNotes.filter { $0.realityCheck == .easy || $0.realityCheck == .effortless }.count
+        let hardCount = completedNotes.filter { $0.realityCheck == .survival || $0.realityCheck == .hard }.count
         let totalRealityChecks = max(1, easyCount + hardCount)
 
         let easyPercentage = Int((Double(easyCount) / Double(totalRealityChecks)) * 100)
@@ -106,7 +106,7 @@ enum SummaryDigestService {
             let existing = counts[theme] ?? (0, 0, 0)
             var updated = existing
 
-            if note.realityCheck == .hardWork {
+            if note.realityCheck == .survival || note.realityCheck == .hard {
                 updated.hardWorkCount += 1
             }
 
