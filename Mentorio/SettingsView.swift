@@ -11,6 +11,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("userName") var userName: String = ""
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome: Bool = false
+    @AppStorage("hasCompletedDemo") private var hasCompletedDemo: Bool = false
     @AppStorage("customOpenRouterKey") private var customOpenRouterKey: String = ""
     @AppStorage("customAIBaseURL") private var customAIBaseURL: String = ""
     @AppStorage("customAIKey") private var customAIKey: String = ""
@@ -297,6 +298,7 @@ struct SettingsView: View {
             Button("Удалить всё", role: .destructive) {
                 viewModel.deleteAllData()
                 hasSeenWelcome = false
+                hasCompletedDemo = false
                 customOpenRouterKey = ""
                 customAIBaseURL = ""
                 customAIKey = ""

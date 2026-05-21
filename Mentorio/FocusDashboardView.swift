@@ -2,36 +2,79 @@ import SwiftUI
 import UserNotifications
 import UIKit
 
+extension UUID: @retroactive Identifiable {
+    public var id: UUID { self }
+}
+
 struct FocusDashboardView: View {
     @ObservedObject var viewModel: MentorioViewModel
     @Binding var selectedTab: AppTab
 
     @State private var isShowingEntry = false
-    @State private var isShowingWinState = false
     @State private var completedNoteID: UUID?
     @State private var selectedDraftNote: BraindumpNote? = nil
     @State private var showVictoryDeleteAlert = false
     @State private var showSettings = false
     @State private var isWiggleMode = false
+    @AppStorage("shouldAutoOpenEntry") private var shouldAutoOpenEntry: Bool = false
 
     private var activeNote: BraindumpNote? {
-        // Only show a note as "active" if it has been explicitly promoted
-        // to .active status via acceptAction(). Draft notes must never appear here.
         if let execId = viewModel.executingNoteId,
            let note = viewModel.notes.first(where: { $0.id == execId }),
            note.status == .active {
             return note
         }
-        // Fallback: first .active note in the list (not draft)
         return viewModel.notes.first(where: { $0.status == .active && !$0.isCompleted && !$0.isInTrash })
     }
 
     private var draftNotes: [BraindumpNote] {
-        guard let activeID = activeNote?.id else { return viewModel.notes }
-        return viewModel.notes.filter { $0.id != activeID }
+        viewModel.notes.filter { $0.status != .active }
+    }
+
+    /// True when Focus Mode owns the screen (hides tab bar)
+    var isFocusModeActive: Bool {
+        activeNote != nil
     }
 
     var body: some View {
+        Group {
+            if let active = activeNote {
+                // MARK: - Focus Mode (replaces entire dashboard)
+                FocusModeView(
+                    viewModel: viewModel,
+                    note: active,
+                    onComplete: {
+                        // Set completedNoteID to trigger WinState fullScreenCover
+                        completedNoteID = active.id
+                    },
+                    onCancel: {
+                        viewModel.executingNoteId = nil
+                        viewModel.deleteNote(id: active.id)
+                    }
+                )
+            } else {
+                // MARK: - Normal Dashboard
+                dashboardContent
+            }
+        }
+        .fullScreenCover(item: $completedNoteID) { noteID in
+            WinStateView(
+                viewModel: viewModel,
+                noteID: noteID,
+                onToArchive: {
+                    // Archive here — after WinState is done
+                    viewModel.archiveNote(id: noteID)
+                    viewModel.executingNoteId = nil
+                    completedNoteID = nil
+                    selectedTab = .archive
+                }
+            )
+        }
+    }
+
+    // MARK: - Dashboard Content
+
+    private var dashboardContent: some View {
         ZStack(alignment: .bottom) {
             MentorioTheme.background.ignoresSafeArea()
                 .onTapGesture {
@@ -62,24 +105,13 @@ struct FocusDashboardView: View {
                     }
                     .padding(.top, 24)
 
-                    if let active = activeNote {
-                        ActiveStickyBar(noteText: active.finalAction ?? active.storedAction ?? active.text) {
-                            viewModel.archiveNote(id: active.id)
-                            completedNoteID = active.id
-                            withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
-                                isShowingWinState = true
-                            }
-                        }
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-
                     HStack {
                         Text("Drafts")
                             .font(.headline.weight(.semibold))
                             .foregroundStyle(.white.opacity(0.76))
-                        
+
                         Spacer()
-                        
+
                         if isWiggleMode && !draftNotes.isEmpty {
                             Button("Готово") {
                                 withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
@@ -180,18 +212,6 @@ struct FocusDashboardView: View {
         }) {
             EntryOverlayView(viewModel: viewModel, isPresented: $isShowingEntry, existingNote: selectedDraftNote)
         }
-        .fullScreenCover(isPresented: $isShowingWinState) {
-            if let completedNoteID {
-                WinStateView(
-                    viewModel: viewModel,
-                    noteID: completedNoteID,
-                    onToArchive: {
-                        isShowingWinState = false
-                        selectedTab = .archive
-                    }
-                )
-            }
-        }
         .animation(.easeInOut(duration: 0.24), value: viewModel.notes.first?.id)
         .alert("Победы нельзя удалить. Это часть твоей истории.", isPresented: $showVictoryDeleteAlert) {
             Button("OK", role: .cancel) {}
@@ -207,6 +227,18 @@ struct FocusDashboardView: View {
                 }
             }
         }
+        .onAppear {
+            // Auto-open EntryOverlay after demo onboarding
+            if shouldAutoOpenEntry {
+                shouldAutoOpenEntry = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    selectedDraftNote = nil
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
+                        isShowingEntry = true
+                    }
+                }
+            }
+        }
     }
 
     private func handleDelete(_ note: BraindumpNote) {
@@ -218,134 +250,6 @@ struct FocusDashboardView: View {
     }
 }
 
-private struct ActiveStickyBar: View {
-    let noteText: String
-    let onComplete: () -> Void
-
-    var body: some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("ACTIVE")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(MentorioTheme.accent)
-
-                Text(noteText)
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(MentorioTheme.primaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 8)
-
-            HoldToCompleteButton(onComplete: onComplete)
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(MentorioTheme.accent.opacity(0.12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(MentorioTheme.accent, lineWidth: 1)
-                )
-        )
-    }
-}
-
-private struct HoldToCompleteButton: View {
-    let onComplete: () -> Void
-
-    @State private var progress: CGFloat = 0
-    @State private var didFinish = false
-    @State private var timer: Timer? = nil
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(MentorioTheme.primaryText.opacity(0.22), lineWidth: 4)
-
-            Circle()
-                .trim(from: 0, to: progress)
-                .stroke(
-                    MentorioTheme.accent,
-                    style: StrokeStyle(lineWidth: 4, lineCap: .round)
-                )
-                .rotationEffect(.degrees(-90))
-
-            Text("Hold")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(MentorioTheme.primaryText)
-        }
-        .frame(width: 68, height: 68)
-        .contentShape(Circle())
-        .onLongPressGesture(minimumDuration: 3.0, maximumDistance: 44, pressing: { pressing in
-            if pressing {
-                didFinish = false
-                progress = 0
-                
-                // 0s: Light initial tap
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.prepare()
-                generator.impactOccurred()
-                
-                withAnimation(.linear(duration: 3.0)) {
-                    progress = 1
-                }
-                
-                // Track seconds
-                var secondsPassed = 0
-                timer?.invalidate()
-                timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-                    secondsPassed += 1
-                    if secondsPassed == 1 {
-                        // 1s: Medium vibration
-                        let gen = UIImpactFeedbackGenerator(style: .medium)
-                        gen.prepare()
-                        gen.impactOccurred()
-                    } else if secondsPassed == 2 {
-                        // 2s: Rigid vibration (building up)
-                        if #available(iOS 16.0, *) {
-                            let gen = UIImpactFeedbackGenerator(style: .rigid)
-                            gen.prepare()
-                            gen.impactOccurred()
-                        } else {
-                            let gen = UIImpactFeedbackGenerator(style: .heavy)
-                            gen.prepare()
-                            gen.impactOccurred()
-                        }
-                    }
-                }
-            } else {
-                timer?.invalidate()
-                timer = nil
-                if !didFinish {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        progress = 0
-                    }
-                }
-            }
-        }, perform: {
-            timer?.invalidate()
-            timer = nil
-            
-            // 3s: Small success "explosion"
-            let generator = UINotificationFeedbackGenerator()
-            generator.prepare()
-            generator.notificationOccurred(.success)
-            
-            didFinish = true
-            progress = 1
-            onComplete()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                progress = 0
-                didFinish = false
-            }
-        })
-        .onDisappear {
-            timer?.invalidate()
-            timer = nil
-        }
-    }
-}
 
 private struct DraftCard: View {
     let text: String

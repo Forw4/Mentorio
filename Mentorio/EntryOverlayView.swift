@@ -34,19 +34,6 @@ struct EntryOverlayView: View {
 
     @FocusState private var isInputFocused: Bool
 
-    // Chat history — simpler than before, just braindump + mentor responses
-    private struct ChatMessage: Identifiable, Equatable {
-        let id: UUID
-        let isAI: Bool
-        let text: String
-
-        init(id: UUID = UUID(), isAI: Bool, text: String) {
-            self.id = id
-            self.isAI = isAI
-            self.text = text
-        }
-    }
-
     @State private var chatHistory: [ChatMessage] = []
 
     // MARK: - Body
@@ -322,7 +309,7 @@ struct EntryOverlayView: View {
 
 // MARK: - Animated Mirror Card
 
-private struct MirrorCardView: View {
+struct MirrorCardView: View {
     let highlight: String
     let action: String
     let emoji: String
@@ -543,17 +530,18 @@ extension EntryOverlayView {
         errorMessage = nil
         isInputFocused = false
 
-        ensureDraft(for: trimmed)
+        let newNote = ensureDraft(for: trimmed)
+        pendingDraftID = newNote.id
         entryState = .analyzing
 
         activeTask?.cancel()
         activeTask = Task {
-            await runMirrorAnalysis(text: trimmed, retryHint: nil)
+            await runMirrorAnalysis(noteId: newNote.id, text: trimmed, retryHint: nil)
         }
     }
 
-    private func runMirrorAnalysis(text: String, retryHint: String?) async {
-        guard let noteId = pendingDraftID else { return }
+    private func runMirrorAnalysis(noteId: UUID, text: String, retryHint: String?) async {
+
 
         do {
             let mirror = try await viewModel.analyzeBraindump(
@@ -567,6 +555,12 @@ extension EntryOverlayView {
             // Step 1: Show intake bubble ("Три проблемы. Беру одну.")
             await MainActor.run {
                 chatHistory.append(ChatMessage(isAI: true, text: mirror.intake))
+                viewModel.updateDraftState(
+                    noteId: noteId,
+                    highlight: mirror.highlight,
+                    emoji: mirror.emoji,
+                    chatHistory: chatHistory
+                )
                 entryState = .intake(text: mirror.intake)
             }
 
@@ -604,10 +598,12 @@ extension EntryOverlayView {
     }
 
     private func regenerateAction() {
+        guard let noteId = pendingDraftID else { return }
         guard case .mirror(let prevHighlight, let prevAction, _) = entryState else { return }
 
         // Append user rejection bubble to maintain chat rhythm
-        chatHistory.append(ChatMessage(isAI: false, text: "Не то"))
+        chatHistory.append(ChatMessage(isAI: false, text: "Не то, давай другое"))
+        viewModel.updateDraftState(noteId: noteId, chatHistory: chatHistory)
 
         entryState = .analyzing
         errorMessage = nil
@@ -621,6 +617,7 @@ extension EntryOverlayView {
             Пользователь нажал "Не то". Дай ДРУГОЙ highlight и ДРУГОЕ действие.
             """
             await runMirrorAnalysis(
+                noteId: noteId,
                 text: braindumpText,
                 retryHint: hint
             )
@@ -634,10 +631,12 @@ extension EntryOverlayView {
         braindumpText = note.text
         errorMessage = nil
 
-        // If note is already executing — close overlay, user should see ActiveBar
-        if case .executing = note.state {
-            closeOverlay()
-            return
+        // Restore chat history if available
+        if let data = note.chatHistoryData,
+           let decoded = try? JSONDecoder().decode([ChatMessage].self, from: data) {
+            chatHistory = decoded
+        } else {
+            chatHistory = []
         }
 
         // If note has stored highlight + action (was in mirror state before closing),
@@ -663,14 +662,29 @@ extension EntryOverlayView {
     private func closeOverlay() {
         activeTask?.cancel()
 
-        // Save mirror state to note before closing — so draft can be restored
-        if case .mirror(let highlight, let action, let emoji) = entryState,
-           let noteId = pendingDraftID,
-           let note = viewModel.notes.first(where: { $0.id == noteId }) {
-            note.storedHighlight = highlight
-            note.storedAction = action
-            note.actionEmoji = emoji
-            viewModel.saveNotes()
+        // Save mirror state and chat history to note before closing
+        if let noteId = pendingDraftID {
+            let currentHighlight: String?
+            let currentAction: String?
+            let currentEmoji: String?
+
+            if case .mirror(let highlight, let action, let emoji) = entryState {
+                currentHighlight = highlight
+                currentAction = action
+                currentEmoji = emoji
+            } else {
+                currentHighlight = nil
+                currentAction = nil
+                currentEmoji = nil
+            }
+
+            viewModel.updateDraftState(
+                noteId: noteId,
+                highlight: currentHighlight,
+                action: currentAction,
+                emoji: currentEmoji,
+                chatHistory: chatHistory
+            )
         }
 
         withAnimation(.easeInOut(duration: 0.22)) {
@@ -678,9 +692,9 @@ extension EntryOverlayView {
         }
     }
 
-    private func ensureDraft(for text: String) {
+    @discardableResult
+    private func ensureDraft(for text: String) -> BraindumpNote {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
 
         if let currentPendingID = pendingDraftID,
            let note = viewModel.notes.first(where: { $0.id == currentPendingID }) {
@@ -688,11 +702,10 @@ extension EntryOverlayView {
                 note.text = trimmed
                 viewModel.saveNotes()
             }
-            return
+            return note
         }
 
-        viewModel.addNote(trimmed, source: "entry_overlay", status: .draft)
-        pendingDraftID = viewModel.selectedNoteId
+        return viewModel.addNote(trimmed, source: "entry_overlay", status: .draft)
     }
 }
 

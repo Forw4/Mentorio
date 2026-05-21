@@ -324,6 +324,29 @@ class MentorioViewModel: ObservableObject {
         }
     }
 
+    /// Update draft persistence state (chat history, mirror preview, etc.)
+    func updateDraftState(
+        noteId: UUID,
+        highlight: String? = nil,
+        action: String? = nil,
+        emoji: String? = nil,
+        chatHistory: [ChatMessage]? = nil
+    ) {
+        guard let note = notes.first(where: { $0.id == noteId }) ?? fetchNote(by: noteId) else { return }
+        
+        if let highlight { note.storedHighlight = highlight }
+        if let action { note.storedAction = action }
+        if let emoji { note.actionEmoji = emoji }
+        
+        if let chatHistory {
+            if let encoded = try? JSONEncoder().encode(chatHistory) {
+                note.chatHistoryData = encoded
+            }
+        }
+        
+        saveContextSilently()
+    }
+
     /// Accept the mirror action — promote note to active + executing state.
     func acceptMirrorAction(noteId: UUID, action: String, highlight: String, emoji: String) {
         guard let note = notes.first(where: { $0.id == noteId }) ?? fetchNote(by: noteId) else { return }
@@ -332,6 +355,7 @@ class MentorioViewModel: ObservableObject {
         note.finalAction = action
         note.storedHighlight = highlight
         note.actionEmoji = emoji
+        note.acceptedAt = Date()
         note.status = .active
         note.state = .executing(action: action)
         executingNoteId = note.id
@@ -348,60 +372,6 @@ class MentorioViewModel: ObservableObject {
         persistAndReload(userFacingError: "Не удалось сохранить действие")
     }
 
-    // MARK: - Legacy State Transitions (kept for compilation, will be removed)
-    
-    func startTransformation(for note: BraindumpNote) {
-        guard let mutableNote = notes.first(where: { $0.id == note.id }) else { return }
-        
-        // Set this note as the focused one (others will collapse)
-        focusedNoteID = note.id
-
-        let intentRoute = MentorioAIService.classifyIntent(
-            for: mutableNote.text,
-            selectedTopic: mutableNote.selectedTopic,
-            userAnswer: mutableNote.userAnswer
-        )
-        let highStakes = MentorioAIService.isHighStakesContext(
-            for: mutableNote.text,
-            selectedTopic: mutableNote.selectedTopic,
-            userAnswer: mutableNote.userAnswer
-        )
-
-        mutableNote.lastIntentRoute = intentRoute
-        mutableNote.lastIsHighStakes = highStakes
-        mutableNote.lastIntentUpdatedAt = Date()
-        trackProductEvent("intent_route_detected", note: mutableNote)
-        
-        mutableNote.state = .analyzing
-        updateNote(mutableNote)
-        
-        // Store operation for retry capability
-        lastFailedNoteId = note.id
-        lastFailedOperation = { [weak self] in
-            self?.startTransformation(for: note)
-        }
-        
-        Task {
-            do {
-                let response = try await MentorioAIService.getCoreHighlightChoices(
-                    for: mutableNote.text,
-                    selectedTopic: mutableNote.selectedTopic,
-                    userAnswer: mutableNote.userAnswer,
-                    clarifyingAttempts: mutableNote.clarifyingAttempts,
-                    isFastTrack: mutableNote.isFastTrack,
-                    contextSummary: mutableNote.contextSummary
-                )
-                
-                loadFocusResponse(noteId: mutableNote.id, response: response)
-            } catch {
-                // Save error and failed operation for retry
-                setError("Не удалось получить анализ: \(error.localizedDescription)")
-                self.lastFailedNoteId = mutableNote.id
-                updateNoteState(noteId: mutableNote.id, to: .idle)
-            }
-        }
-    }
-    
     // MARK: - Error Recovery
     
     func retryLastOperation() {
@@ -409,219 +379,78 @@ class MentorioViewModel: ObservableObject {
         errorMessage = nil  // Clear error before retry
         operation()
     }
+
+
+    // MARK: - Legacy 1.0 Support (Required for NoteCardView)
+    // These methods support the old card-based interaction flow.
     
-    @MainActor
-    private func updateNoteState(noteId: UUID, with response: FocusResponse) {
-        guard let note = notes.first(where: { $0.id == noteId }) else { return }
+    func startTransformation(for note: BraindumpNote) {
+        guard let mutableNote = notes.first(where: { $0.id == note.id }) else { return }
+        focusedNoteID = note.id
+        mutableNote.state = .analyzing
+        updateNote(mutableNote)
         
-        // Логирование для отладки
-        print("📋 API Response:")
-        print("   topics: \(response.topics?.isEmpty == false ? "✓ (\(response.topics?.count ?? 0))" : "✗")")
-        print("   highlight: \(response.highlight?.isEmpty == false ? "✓" : "✗")")
-        print("   insight: \(response.insight?.isEmpty == false ? "✓" : "✗")")
-        print("   question: \(response.question?.isEmpty == false ? "✓" : "✗")")
-        print("   choices: \(response.choices?.isEmpty == false ? "✓ (\(response.choices?.count ?? 0))" : "✗")")
-
-        // FAULT-TOLERANT LOGIC: Proceed even if some fields are null
-        if let topics = response.topics, !topics.isEmpty {
-            print("→ Transitioning to .needsTopic")
-            note.state = .needsTopic(topics: topics)
-            trackDebugEvent("gate_branch_triggered", note: note, props: ["branch_type": "A"])
-            if note.selectedTopic == nil, note.userAnswer == nil, note.clarifyingAttempts == 0 {
-                trackDebugEvent("forced_topic_gate_triggered", note: note, props: [
-                    "topics_count": "\(topics.count)"
-                ])
+        Task {
+            do {
+                let response = try await MentorioAIService.getCoreHighlightChoices(
+                    for: mutableNote.text,
+                    selectedTopic: mutableNote.selectedTopic,
+                    userAnswer: mutableNote.userAnswer
+                )
+                await MainActor.run {
+                    loadFocusResponseLegacy(noteId: mutableNote.id, response: response)
+                }
+            } catch {
+                setError("Ошибка анализа: \(error.localizedDescription)")
+                updateNoteStateLegacy(noteId: mutableNote.id, to: .idle)
             }
-            trackProductEvent("intent_route_outcome", note: note, props: [
-                "outcome": "topics"
-            ])
-        } else if let question = response.question, !question.isEmpty {
-            print("→ Transitioning to .clarifying")
-            note.state = .clarifying(question: question)
-            trackDebugEvent("gate_branch_triggered", note: note, props: ["branch_type": "B"])
-            trackProductEvent("intent_route_outcome", note: note, props: [
-                "outcome": "question"
-            ])
-
-            if note.lastIntentRoute == "decision_paralysis" && note.clarifyingAttempts == 0 {
-                trackProductEvent("decision_research_cycle_started", note: note)
-            }
-
-            if note.lastIntentRoute == "decision_paralysis" && note.clarifyingAttempts >= 1 {
-                trackDebugEvent("decision_research_cycle_violation", note: note)
-            }
-        } else if let choices = response.choices, !choices.isEmpty {
-            // FAULT-TOLERANT: highlight and insight are optional now
-            // Use provided values or empty strings as fallback
-            let highlight = response.highlight ?? ""
-            let insight = response.insight ?? ""
-            print("→ Transitioning to .hasTactics with \(choices.count) choices (highlight: \(highlight.isEmpty ? "empty" : "present"), insight: \(insight.isEmpty ? "empty" : "present"))")
-            note.state = .hasTactics(choices: choices, highlight: highlight, insight: insight, topics: response.topics)
-            trackDebugEvent("gate_branch_triggered", note: note, props: ["branch_type": "C"])
-            trackDebugEvent("mirror_viewed", note: note)
-            trackProductEvent("intent_route_outcome", note: note, props: [
-                "outcome": "choices"
-            ])
-
-            if note.lastIntentRoute == "decision_paralysis" && note.clarifyingAttempts >= 1 {
-                trackProductEvent("decision_research_cycle_closed", note: note)
-            }
-        } else {
-            // No viable state - show error but DON'T crash
-            let errorMsg = "Incomplete response: needs choices, topics, or question. Got: topics=\(response.topics?.count ?? 0), choices=\(response.choices?.count ?? 0)"
-            print("❌ \(errorMsg)")
-            errorMessage = errorMsg
-            note.state = .idle
-            trackProductEvent("intent_route_outcome", note: note, props: [
-                "outcome": "invalid"
-            ])
         }
-        
-        updateNote(note)
     }
-    
+
+    func selectTopic(_ topic: String, for noteId: UUID) {
+        guard let note = notes.first(where: { $0.id == noteId }) else { return }
+        note.selectedTopic = topic
+        updateNote(note)
+        startTransformation(for: note)
+    }
+
+    func submitAnswer(_ answer: String, for noteId: UUID) {
+        guard let note = notes.first(where: { $0.id == noteId }) else { return }
+        note.userAnswer = answer
+        note.clarifyingAttempts += 1
+        updateNote(note)
+        startTransformation(for: note)
+    }
+
     @MainActor
-    private func updateNoteState(noteId: UUID, to state: NoteState) {
+    private func updateNoteStateLegacy(noteId: UUID, to state: NoteState) {
         guard let note = notes.first(where: { $0.id == noteId }) else { return }
         note.state = state
         updateNote(note)
     }
 
     @MainActor
-    private func loadFocusResponse(noteId: UUID, response: FocusResponse) {
+    private func loadFocusResponseLegacy(noteId: UUID, response: FocusResponse) {
         guard let note = notes.first(where: { $0.id == noteId }) else { return }
-
-        if let highlight = response.highlight,
-           !highlight.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            note.storedHighlight = highlight
-        }
-
-        if let insight = response.insight,
-           !insight.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            note.storedInsight = insight
-        }
-
-        updateNote(note)
-        saveContextSilently()
-        updateNoteState(noteId: noteId, with: response)
-    }
-    
-    // MARK: - User Actions
-    
-    func selectTopic(_ topic: String, for noteId: UUID) {
-        guard let note = notes.first(where: { $0.id == noteId }) else { return }
-        note.selectedTopic = topic
-        updateNote(note)
+        if let highlight = response.highlight, !highlight.isEmpty { note.storedHighlight = highlight }
+        if let insight = response.insight, !insight.isEmpty { note.storedInsight = insight }
         
-        Task {
-            await updateNoteSummary(noteId: noteId)
-            startTransformation(for: note)
+        if let topics = response.topics, !topics.isEmpty {
+            note.state = .needsTopic(topics: topics)
+        } else if let question = response.question, !question.isEmpty {
+            note.state = .clarifying(question: question)
+        } else if let choices = response.choices, !choices.isEmpty {
+            note.state = .hasTactics(choices: choices, highlight: response.highlight ?? "", insight: response.insight ?? "", topics: response.topics)
+        } else {
+            note.state = .idle
         }
-    }
-    
-    func submitAnswer(_ answer: String, for noteId: UUID) {
-        guard let note = notes.first(where: { $0.id == noteId }) else { return }
-        note.userAnswer = answer
-        note.clarifyingAttempts += 1  // SPEC: "Счётчик инкрементируется при каждом submitAnswer()"
-        
-        // Fast-track check
-        let fastTrackKeywords: Set<String> = ["да", "ок", "окей", "ok", "погнали", "го", "давай", "согласен", "ага", "угу", "хорошо"]
-        let cleanAnswer = answer.lowercased().trimmingCharacters(in: .punctuationCharacters.union(.whitespaces))
-        let isFastTrack = fastTrackKeywords.contains(cleanAnswer) || cleanAnswer.count <= 3
-        note.isFastTrack = isFastTrack
-        
-        trackProductEvent("clarification_submitted", note: note)
-        updateNote(note)
-        
-        Task {
-            let forceChoices = note.clarifyingAttempts >= 2 || isFastTrack
-            if forceChoices {
-                await updateNoteSummary(noteId: noteId)
-            }
-            startTransformation(for: note)
-        }
-    }
-    
-    func selectChoice(_ choiceIndex: Int, for noteId: UUID) {
-        guard let note = notes.first(where: { $0.id == noteId }) else { return }
-        note.selectedChoiceIndex = choiceIndex
-        updateNote(note)
-
-        // IMPORTANT: We do NOT call triggerFinalAction here.
-        // One Action generation requires explicit user confirmation via
-        // EntryOverlayView.acceptAction() → promoteDraftToActive().
-        // NoteCardView uses onRequestOpenEntry callback to open EntryOverlayView
-        // where the user completes the flow properly.
-        if case .hasTactics(let choices, _, _, _) = note.state, choiceIndex < choices.count {
-            trackProductEvent("choice_tapped_from_card", note: note, props: [
-                "choice_index": "\(choiceIndex)",
-                "choice_text": choices[choiceIndex]
-            ])
-        }
-    }
-    
-    // MARK: - Final Action
-    
-    private func triggerFinalAction(
-        for note: BraindumpNote,
-        choice: String,
-        highlight: String,
-        insight: String
-    ) {
-        let mutableNote = note
-        mutableNote.state = .analyzing
-        updateNote(mutableNote)
-        // NOTE: We do NOT set executingNoteId here.
-        // executingNoteId is only set AFTER promoteDraftToActive() is called
-        // from EntryOverlayView.acceptAction(), i.e. when the user explicitly
-        // taps the "Accept" button. Setting it here would immediately show the
-        // OneActionOverlay even though the user never confirmed anything.
-
-        trackProductEvent("one_action_requested", note: note, props: [
-            "choice_text": choice
-        ])
-        
-        Task {
-            do {
-                let action = try await MentorioAIService.getOneAction(
-                    for: choice,
-                    braindump: note.text,
-                    highlight: highlight,
-                    insight: insight,
-                    selectedTopic: note.selectedTopic
-                )
-                
-                setExecutingAction(noteId: note.id, action: action)
-            } catch {
-                setError("Не удалось создать действие: \(error.localizedDescription)")
-                updateNoteState(noteId: note.id, to: .idle)
-                executingNoteId = nil
-            }
-        }
-    }
-    
-    @MainActor
-    private func setExecutingAction(noteId: UUID, action: String) {
-        guard let note = notes.first(where: { $0.id == noteId }) else { return }
-        // IMPORTANT: Only transition to .executing if this note has already been
-        // promoted to .active. If status is still .draft, the user hasn't confirmed
-        // the action yet — just store the generated text in a temp field so the
-        // overlay can display it, but do NOT set state = .executing.
-        // The actual promotion to .active + .executing happens in acceptAction()
-        // inside EntryOverlayView when the user explicitly taps "Принять".
-        guard note.status == .active else {
-            // Silently store the action text so EntryOverlayView can display it,
-            // but keep the note in .hasTactics state as a draft.
-            // Do NOT persist storedAction here — acceptAction() owns that write.
-            print("ℹ️ setExecutingAction: note is still draft, skipping .executing transition")
-            return
-        }
-        note.storedAction = action
-        note.state = .executing(action: action)
-        trackProductEvent("one_action_generated", note: note)
         updateNote(note)
         saveContextSilently()
     }
+    
+
+    
+
 
     func trackOneActionStarted(noteId: UUID, source: String = "hold_button") {
         guard let note = resolveNoteForTracking(noteId: noteId) else { return }

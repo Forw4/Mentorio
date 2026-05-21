@@ -4,13 +4,23 @@ import SwiftUI
 struct MentorioApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome: Bool = false
+    @AppStorage("hasCompletedDemo") private var hasCompletedDemo: Bool = false
     @AppStorage("appTheme") private var appTheme: AppTheme = .system
+    @AppStorage("shouldAutoOpenEntry") private var shouldAutoOpenEntry: Bool = false
 
     var body: some Scene {
         WindowGroup {
             Group {
                 if !hasSeenWelcome {
                     WelcomeGateView(hasSeenWelcome: $hasSeenWelcome)
+                } else if !hasCompletedDemo {
+                    DemoOnboardingView {
+                        // Demo finished → mark complete and auto-open EntryOverlay
+                        shouldAutoOpenEntry = true
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            hasCompletedDemo = true
+                        }
+                    }
                 } else {
                     RootView()
                 }
