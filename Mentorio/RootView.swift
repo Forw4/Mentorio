@@ -4,6 +4,7 @@ import SwiftData
 enum AppTab: Hashable {
     case focus
     case archive
+    case insights
 }
 
 struct RootView: View {
@@ -41,7 +42,7 @@ struct RootView: View {
                 TabView(selection: $selectedTab) {
                     FocusDashboardView(viewModel: viewModel, selectedTab: $selectedTab)
                         .tabItem {
-                            Label("Focus", systemImage: "target")
+                            Label("Focus", systemImage: "circle")
                         }
                         .tag(AppTab.focus)
 
@@ -50,6 +51,12 @@ struct RootView: View {
                             Label("Archive", systemImage: "archivebox")
                         }
                         .tag(AppTab.archive)
+
+                    InsightsView()
+                        .tabItem {
+                            Label("Insights", systemImage: "chart.line.uptrend.xyaxis")
+                        }
+                        .tag(AppTab.insights)
                 }
             }
         }
